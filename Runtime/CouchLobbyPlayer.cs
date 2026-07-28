@@ -85,14 +85,14 @@ namespace Animo.CouchGames
     [Serializable]
     internal sealed class LobbyPlayersEnvelope
     {
-        public CouchLobbyPlayer[] players;
+        public CouchLobbyPlayer[] players = Array.Empty<CouchLobbyPlayer>();
     }
 
     [Serializable]
     internal sealed class LobbyEventEnvelope
     {
-        public string eventName;
-        public string dataJson;
-        public string senderUserId;
+        public string eventName = "";
+        public string dataJson = "null";
+        public string senderUserId = "";
     }
 }

@@ -22,7 +22,9 @@ namespace Animo.CouchGames
             new Dictionary<int, TaskCompletionSource<CouchGamesResponse>>();
         private readonly List<CouchLobbyPlayer> _mockPlayers = new List<CouchLobbyPlayer>();
         private MockStore _mockStore;
+#if UNITY_WEBGL && !UNITY_EDITOR
         private int _requestId;
+#endif
         private int _nextGuest = 1;
         private long _gameplayStartedAt = -1;
 
@@ -343,7 +345,7 @@ namespace Animo.CouchGames
 
         private string BuildMetadataJson()
         {
-            var categories = _mockStore.metadata
+            var categoryProperties = _mockStore.metadata
                 .GroupBy(entry => entry.category ?? string.Empty)
                 .Select(group =>
                 {
@@ -352,7 +354,15 @@ namespace Animo.CouchGames
                         CouchGamesSdk.JsonString(entry.value));
                     return CouchGamesSdk.JsonString(group.Key) + ":{" + string.Join(",", values) + "}";
                 });
-            return "{" + string.Join(",", categories) + "}";
+            var rootProperties = _mockStore.metadata
+                .GroupBy(entry => entry.key ?? string.Empty)
+                .Select(group =>
+                {
+                    var entry = group.Last();
+                    return CouchGamesSdk.JsonString(entry.key) + ":" +
+                           CouchGamesSdk.JsonString(entry.value);
+                });
+            return "{" + string.Join(",", categoryProperties.Concat(rootProperties)) + "}";
         }
 
         private void FoldGameplayTime()

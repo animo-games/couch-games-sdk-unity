@@ -44,10 +44,10 @@ namespace Animo.CouchGames
     [Serializable]
     internal sealed class BridgeResponse
     {
-        public int requestId;
-        public bool success;
-        public string error;
-        public string payloadJson;
-        public string rawJson;
+        public int requestId = 0;
+        public bool success = false;
+        public string error = "";
+        public string payloadJson = "null";
+        public string rawJson = "null";
     }
 }
