@@ -1,0 +1,18 @@
+{
+  "name": "Animo.CouchGames.Editor",
+  "rootNamespace": "Animo.CouchGames.Editor",
+  "references": [
+    "Animo.CouchGames"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
