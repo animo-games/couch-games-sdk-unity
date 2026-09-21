@@ -1,6 +1,6 @@
 {
   "name": "com.animo.couch-games",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "Couch Games SDK",
   "description": "Unity WebGL bridge and local development tools for the Couch Games platform.",
   "unity": "2022.3",

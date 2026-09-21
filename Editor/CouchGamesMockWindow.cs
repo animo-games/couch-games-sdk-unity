@@ -52,6 +52,25 @@ namespace Animo.CouchGames.Editor
             }
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Saves", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                "Stored save",
+                CouchGamesSdk.MockHasStoredSave
+                    ? $"revision {CouchGamesSdk.MockStoredRevision}"
+                    : "(none)");
+            CouchGamesMock.SimulateLoadUnavailable = EditorGUILayout.Toggle(
+                "Simulate load unavailable", CouchGamesMock.SimulateLoadUnavailable);
+            CouchGamesMock.SimulateHostAuthoritative = EditorGUILayout.Toggle(
+                "Simulate host authoritative", CouchGamesMock.SimulateHostAuthoritative);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Simulate Unread Save"))
+                    CouchGamesMock.SimulateUnreadSave();
+                if (GUILayout.Button("Clear Mock Data"))
+                    CouchGamesMock.ClearData();
+            }
+
+            EditorGUILayout.Space();
             EditorGUILayout.LabelField("Inject Event", EditorStyles.boldLabel);
             _senderUserId = EditorGUILayout.TextField("Sender user ID", _senderUserId);
             _eventName = EditorGUILayout.TextField("Event", _eventName);

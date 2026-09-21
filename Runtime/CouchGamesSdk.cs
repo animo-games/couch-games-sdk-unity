@@ -20,24 +20,103 @@ namespace Animo.CouchGames
             return _initialization ??= InitializeInternalAsync();
         }
 
-        public static Task<CouchGamesResponse> SaveGameAsync<T>(T saveData, float progress = 0f)
+        /// <summary>
+        /// Writes <paramref name="saveData"/> to the platform. Branch on
+        /// <see cref="CouchGamesResponse.Persisted"/>, NOT
+        /// <see cref="CouchGamesResponse.Success"/> -- a refusal arrives, by
+        /// default, as <c>Success = true, Persisted = false</c>.
+        ///
+        /// <paramref name="expectedRevision"/> asserts what state you are
+        /// replacing (typically <see cref="CouchGamesSaveLoadResult.Revision"/>
+        /// from a prior <see cref="LoadSaveResultAsync"/>). <paramref name="onConflict"/>
+        /// only makes sense with a BOUNDED retry loop -- see
+        /// <see cref="CouchGamesSaveConflictMode"/>.
+        /// </summary>
+        public static Task<CouchGamesResponse> SaveGameAsync<T>(
+            T saveData,
+            float progress = 0f,
+            long? expectedRevision = null,
+            CouchGamesSaveConflictMode onConflict = CouchGamesSaveConflictMode.Default)
         {
-            return SaveGameJsonAsync(JsonUtility.ToJson(saveData), progress);
+            return SaveGameJsonAsync(JsonUtility.ToJson(saveData), progress, expectedRevision, onConflict);
         }
 
-        public static Task<CouchGamesResponse> SaveGameJsonAsync(string saveJson, float progress = 0f)
+        /// <summary>
+        /// See <see cref="SaveGameAsync{T}"/>.
+        /// </summary>
+        public static Task<CouchGamesResponse> SaveGameJsonAsync(
+            string saveJson,
+            float progress = 0f,
+            long? expectedRevision = null,
+            CouchGamesSaveConflictMode onConflict = CouchGamesSaveConflictMode.Default)
         {
             var runtime = CouchGamesRuntime.Instance;
             if (runtime.IsMock)
-                return Task.FromResult(runtime.SaveMock(saveJson, progress));
+                return Task.FromResult(runtime.SaveMock(saveJson, progress, expectedRevision, onConflict));
+
+            var progressArg = progress.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (expectedRevision == null && onConflict == CouchGamesSaveConflictMode.Default)
+            {
+                // The two-argument call, byte for byte as before. A game that
+                // has not opted in must not send an options object to a
+                // platform build that predates one.
+                return runtime.InvokeAsync(
+                    "saveGame",
+                    JsonArray(JsonString(saveJson ?? "{}"), progressArg));
+            }
+
+            var optionProperties = new System.Collections.Generic.List<string>();
+            if (expectedRevision != null)
+            {
+                optionProperties.Add(
+                    "\"expectedRevision\":" +
+                    expectedRevision.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (onConflict == CouchGamesSaveConflictMode.Error)
+                optionProperties.Add("\"onConflict\":\"error\"");
+            var optionsJson = "{" + string.Join(",", optionProperties) + "}";
+
             return runtime.InvokeAsync(
                 "saveGame",
-                JsonArray(JsonString(saveJson ?? "{}"), progress.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                JsonArray(JsonString(saveJson ?? "{}"), progressArg, optionsJson));
         }
 
+        /// <summary>
+        /// Reads the save the platform handed this session at startup.
+        ///
+        /// An empty/null result here is AMBIGUOUS: this player may genuinely
+        /// have no save, the session may not have finished starting, or they
+        /// may have joined someone else's session with their own save withheld
+        /// on purpose. Use this only to re-read state you have already
+        /// established. To decide whether a player is new, use
+        /// <see cref="LoadSaveResultAsync"/>.
+        /// </summary>
         public static Task<CouchGamesResponse> LoadLatestSaveAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("loadLatestSave", "[]");
+        }
+
+        /// <summary>
+        /// The awaitable, honest counterpart to <see cref="LoadLatestSaveAsync"/>.
+        /// Only <see cref="CouchGamesSaveLoadResult.IsSafeToStartFresh"/> means
+        /// this is a new player. <see cref="CouchGamesSaveLoadResult.IsUnavailable"/>
+        /// means a save may well exist -- keep writes off. When
+        /// <see cref="CouchGamesSaveLoadResult.HostAuthoritative"/> is true the
+        /// payload is your own save but the host owns the shared board -- use it
+        /// as a merge base rather than live state.
+        /// </summary>
+        public static Task<CouchGamesSaveLoadResult> LoadSaveResultAsync()
+        {
+            var runtime = CouchGamesRuntime.Instance;
+            if (runtime.IsMock)
+                return Task.FromResult(runtime.LoadSaveResultMock());
+            return LoadSaveResultBridgeAsync(runtime);
+        }
+
+        private static async Task<CouchGamesSaveLoadResult> LoadSaveResultBridgeAsync(CouchGamesRuntime runtime)
+        {
+            var bridge = await runtime.InvokeBridgeAsync("loadSaveResult", "[]");
+            return CouchGamesSaveLoadResult.FromBridge(bridge);
         }
 
         public static Task<CouchGamesResponse> GameplayStartAsync()
@@ -143,6 +222,16 @@ namespace Animo.CouchGames
         {
             CouchGamesRuntime.Instance.SimulateMockEvent(eventName, dataJson, senderUserId, target);
         }
+
+        // The Editor assembly is not covered by an InternalsVisibleTo from
+        // Animo.CouchGames, so the mock window's Saves section reads these
+        // through public members rather than internal ones.
+
+        /// <summary>The mock backend's stored save revision, or 0 when nothing is stored.</summary>
+        public static long MockStoredRevision => CouchGamesRuntime.Instance.MockStoredRevision;
+
+        /// <summary>True when the mock backend has a stored save.</summary>
+        public static bool MockHasStoredSave => CouchGamesRuntime.Instance.MockHasSave;
 
         private static async Task InitializeInternalAsync()
         {

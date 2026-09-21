@@ -18,8 +18,8 @@ namespace Animo.CouchGames
         private const string MockDirectoryName = "couch_games_mock";
         private static CouchGamesRuntime _instance;
 
-        private readonly Dictionary<int, TaskCompletionSource<CouchGamesResponse>> _requests =
-            new Dictionary<int, TaskCompletionSource<CouchGamesResponse>>();
+        private readonly Dictionary<int, TaskCompletionSource<BridgeResponse>> _requests =
+            new Dictionary<int, TaskCompletionSource<BridgeResponse>>();
         private readonly List<CouchLobbyPlayer> _mockPlayers = new List<CouchLobbyPlayer>();
         private MockStore _mockStore;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -27,6 +27,26 @@ namespace Animo.CouchGames
 #endif
         private int _nextGuest = 1;
         private long _gameplayStartedAt = -1;
+
+        // The stored revision this simulated session has seen. Set to the
+        // stored revision at startup, the way the platform hands a session its
+        // save, so the editor's normal save-without-loading flow keeps working
+        // unchanged.
+        private long _mockSessionKnownRevision;
+
+        /// <summary>
+        /// Makes <see cref="LoadSaveResultMock"/> report Unavailable -- a save
+        /// may exist and could not be read, so callers must not treat the
+        /// player as new.
+        /// </summary>
+        internal bool MockSimulateLoadUnavailable { get; set; }
+
+        /// <summary>
+        /// Makes <see cref="LoadSaveResultMock"/> report HostAuthoritative --
+        /// this player joined someone else's session, so the payload is their
+        /// own save and the host owns the shared board.
+        /// </summary>
+        internal bool MockSimulateHostAuthoritative { get; set; }
 
         internal static CouchGamesRuntime Instance
         {
@@ -91,19 +111,32 @@ namespace Animo.CouchGames
             return Task.CompletedTask;
         }
 
-        internal Task<CouchGamesResponse> InvokeAsync(string method, string argumentsJson)
+        internal async Task<CouchGamesResponse> InvokeAsync(string method, string argumentsJson)
         {
             if (IsMock)
-                return Task.FromResult(InvokeMock(method));
+                return InvokeMock(method);
 
+            var bridge = await InvokeBridgeAsync(method, argumentsJson);
+            return new CouchGamesResponse(
+                bridge.success,
+                bridge.error,
+                bridge.payloadJson,
+                bridge.rawJson,
+                bridge.persisted,
+                bridge.conflict,
+                bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null);
+        }
+
+        internal Task<BridgeResponse> InvokeBridgeAsync(string method, string argumentsJson)
+        {
 #if UNITY_WEBGL && !UNITY_EDITOR
             var id = ++_requestId;
-            var completion = new TaskCompletionSource<CouchGamesResponse>();
+            var completion = new TaskCompletionSource<BridgeResponse>();
             _requests[id] = completion;
             CGU_Invoke(method, argumentsJson, gameObject.name, nameof(OnCouchGamesResponse), id);
             return completion.Task;
 #else
-            return Task.FromResult(CouchGamesResponse.Failed("Couch Games is unavailable."));
+            return Task.FromResult(new BridgeResponse { success = false, error = "Couch Games is unavailable." });
 #endif
         }
 
@@ -131,14 +164,148 @@ namespace Animo.CouchGames
 #endif
         }
 
-        internal CouchGamesResponse SaveMock(string saveJson, float progress)
+        internal CouchGamesResponse SaveMock(
+            string saveJson,
+            float progress,
+            long? expectedRevision,
+            CouchGamesSaveConflictMode onConflict)
         {
+            var stored = StoredMockRevision();
+            if (!AdmitsMockSaveWrite(stored, expectedRevision))
+            {
+                // The platform's shape for a refusal, both modes. Only
+                // `Success` differs between them; `Persisted` is accurate in
+                // both, which is why it is the field callers should branch on.
+                return new CouchGamesResponse(
+                    onConflict != CouchGamesSaveConflictMode.Error,
+                    "Save skipped: this session has not loaded the stored save it would replace",
+                    "null",
+                    "null",
+                    persisted: false,
+                    conflict: true,
+                    // A refusal implies something is stored: AdmitsMockSaveWrite
+                    // always admits at revision 0.
+                    currentRevision: stored);
+            }
+
+            var next = stored + 1;
             _mockStore.saveJson = string.IsNullOrEmpty(saveJson) ? "{}" : saveJson;
             _mockStore.progress = progress;
             _mockStore.savedAt = DateTime.UtcNow.ToString("O");
+            _mockStore.revision = next;
+            // A session that just wrote knows what is stored: itself. Without
+            // this a new player's SECOND save would be refused as a blind
+            // overwrite of their own.
+            _mockSessionKnownRevision = next;
             PersistMock();
-            return CouchGamesResponse.Ok();
+            return new CouchGamesResponse(true, "", "{}", "{}", persisted: true, conflict: false, currentRevision: next);
         }
+
+        /// <summary>
+        /// The stored save's revision, or 0 when nothing is stored. Saves
+        /// written by the 0.1.0 mock have no revision and count as 1.
+        /// </summary>
+        private long StoredMockRevision()
+        {
+            if (string.IsNullOrEmpty(_mockStore.saveJson))
+                return 0;
+            return Math.Max(1, _mockStore.revision);
+        }
+
+        /// <summary>
+        /// Mirrors the platform's no-clobber guard: a write lands unless it
+        /// would replace a stored save this session has never seen.
+        /// </summary>
+        private bool AdmitsMockSaveWrite(long stored, long? expected)
+        {
+            if (stored == 0)
+                return true; // Nothing stored, so nothing to destroy.
+            if (_mockSessionKnownRevision == stored)
+                return true;
+            if (expected.HasValue && expected.Value == stored)
+                return true; // The caller asserted what it replaces, and is right.
+            return false;
+        }
+
+        /// <summary>
+        /// The awaitable, honest counterpart to <see cref="LoadLatestSaveSync"/>
+        /// for the mock backend. See <see cref="CouchGamesSaveLoadResult"/>.
+        /// </summary>
+        internal CouchGamesSaveLoadResult LoadSaveResultMock()
+        {
+            if (MockSimulateLoadUnavailable)
+            {
+                // Note the deliberate asymmetry with the platform: an
+                // unavailable read does NOT mark the save as read, so a save
+                // that follows one is still refused. That is what makes
+                // "unavailable means keep writes off" testable in the editor.
+                return CouchGamesSaveLoadResult.Unavailable(
+                    "Simulated: save could not be loaded", MockSimulateHostAuthoritative);
+            }
+
+            // Both authoritative answers sync the session, exactly as the
+            // platform does: the game has now seen what is stored, or
+            // confirmed nothing is, so its next write is intentional rather
+            // than blind. This is what makes the documented recovery -- load,
+            // merge, write -- work against the mock.
+            _mockSessionKnownRevision = StoredMockRevision();
+
+            if (string.IsNullOrEmpty(_mockStore.saveJson))
+            {
+                return new CouchGamesSaveLoadResult(
+                    CouchGamesSaveStatus.NotFound,
+                    "No save found",
+                    "null",
+                    BuildMetadataJson(),
+                    null,
+                    MockSimulateHostAuthoritative);
+            }
+
+            return new CouchGamesSaveLoadResult(
+                CouchGamesSaveStatus.Found,
+                "",
+                _mockStore.saveJson,
+                BuildMetadataJson(),
+                StoredMockRevision(),
+                MockSimulateHostAuthoritative);
+        }
+
+        /// <summary>
+        /// Pretend this session never read the stored save, so the next
+        /// whole-document save is refused the way the platform refuses a
+        /// joined guest's blind write. No-op when nothing is stored -- the
+        /// platform always admits a new player's first save, and so does the
+        /// mock.
+        ///
+        /// Recovery works as documented: call
+        /// <see cref="CouchGamesSdk.LoadSaveResultAsync"/>, merge into what it
+        /// returns, and the next write is admitted again.
+        /// </summary>
+        internal void SimulateMockUnreadSave()
+        {
+            RequireMock();
+            _mockSessionKnownRevision = -1;
+        }
+
+        internal void ClearMockData()
+        {
+            RequireMock();
+            _mockStore = new MockStore();
+            _mockSessionKnownRevision = 0;
+            try
+            {
+                if (File.Exists(MockPath))
+                    File.Delete(MockPath);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Couch Games mock data could not be cleared: {exception.Message}");
+            }
+        }
+
+        internal long MockStoredRevision => StoredMockRevision();
+
+        internal bool MockHasSave => !string.IsNullOrEmpty(_mockStore?.saveJson);
 
         internal CouchGamesResponse SetMockMetadata(string category, string key, string value)
         {
@@ -245,11 +412,7 @@ namespace Animo.CouchGames
                 return;
 
             _requests.Remove(message.requestId);
-            completion.TrySetResult(new CouchGamesResponse(
-                message.success,
-                message.error,
-                message.payloadJson,
-                message.rawJson));
+            completion.TrySetResult(message);
         }
 
         public void OnCouchGamesLobbyEvent(string json)
@@ -282,6 +445,9 @@ namespace Animo.CouchGames
         private void InitializeMock()
         {
             _mockStore = LoadMock();
+            // The platform hands a session its save at startup, so the editor's
+            // normal save-without-loading flow keeps working.
+            _mockSessionKnownRevision = StoredMockRevision();
             var host = new CouchLobbyPlayer
             {
                 userId = "mock-local-host",
@@ -469,6 +635,7 @@ namespace Animo.CouchGames
             public string saveJson = "";
             public float progress;
             public string savedAt = "";
+            public long revision;
             public string experienceDate = "2026-01-01T00:00:00.000Z";
             public double cumulativeGameplayTimeMs;
             public bool gameplayCompleted;

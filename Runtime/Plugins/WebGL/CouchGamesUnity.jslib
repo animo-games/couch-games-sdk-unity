@@ -12,18 +12,50 @@ mergeInto(LibraryManager.library, {
         function send(success, result, error) {
             var isPlatformResponse = result && typeof result === 'object' &&
                 (Object.prototype.hasOwnProperty.call(result, 'success') ||
-                 Object.prototype.hasOwnProperty.call(result, 'payload'));
+                 Object.prototype.hasOwnProperty.call(result, 'payload') ||
+                 Object.prototype.hasOwnProperty.call(result, 'status'));
             var platformSuccess = success && (!isPlatformResponse || result.success !== false);
             var platformError = error || (isPlatformResponse && result.error ? String(result.error) : '');
+            if (!platformError && isPlatformResponse && typeof result.message === 'string' &&
+                (platformSuccess === false || result.conflict === true)) {
+                // The platform reports failures in `message`; a refusal's
+                // explanation must reach C# as `Error`.
+                platformError = String(result.message);
+            }
             var payload = isPlatformResponse ? result.payload : result;
             if (typeof payload === 'undefined')
                 payload = null;
+            if (isPlatformResponse && typeof result.status === 'string' && typeof payload === 'string') {
+                // A loadSaveResult payload may be a JSON string rather than an
+                // object.
+                try {
+                    var parsedPayload = JSON.parse(payload);
+                    if (parsedPayload !== null && typeof parsedPayload === 'object')
+                        payload = parsedPayload;
+                } catch (parseError) {
+                    // Swallow: fall through with the original string payload.
+                }
+            }
+            var hasCurrentRevision = isPlatformResponse && typeof result.currentRevision === 'number' &&
+                isFinite(result.currentRevision);
+            var hasRevision = isPlatformResponse && typeof result.revision === 'number' &&
+                isFinite(result.revision);
             SendMessage(objectName, callback, JSON.stringify({
                 requestId: requestId,
                 success: platformSuccess,
                 error: platformError,
                 payloadJson: JSON.stringify(payload),
-                rawJson: JSON.stringify(typeof result === 'undefined' ? null : result)
+                rawJson: JSON.stringify(typeof result === 'undefined' ? null : result),
+                persisted: isPlatformResponse && result.persisted === true,
+                conflict: isPlatformResponse && result.conflict === true,
+                hasCurrentRevision: hasCurrentRevision,
+                currentRevision: hasCurrentRevision ? Math.trunc(result.currentRevision) : 0,
+                status: isPlatformResponse && typeof result.status === 'string' ? result.status : '',
+                message: isPlatformResponse && typeof result.message === 'string' ? result.message : '',
+                metadataJson: JSON.stringify(isPlatformResponse && result.metadata !== undefined ? result.metadata : null),
+                hasRevision: hasRevision,
+                revision: hasRevision ? Math.trunc(result.revision) : 0,
+                hostAuthoritative: isPlatformResponse && result.hostAuthoritative === true
             }));
         }
 
