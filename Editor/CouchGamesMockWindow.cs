@@ -71,6 +71,25 @@ namespace Animo.CouchGames.Editor
             }
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Experience Files", EditorStyles.boldLabel);
+            var experienceDirectory = CouchGamesMock.ExperienceFilesDirectory;
+            EditorGUILayout.SelectableLabel(experienceDirectory, GUILayout.Height(EditorGUIUtility.singleLineHeight));
+            if (!System.IO.Directory.Exists(experienceDirectory))
+            {
+                EditorGUILayout.HelpBox(
+                    "Folder not found. Create it and drop experience files in to serve them by basename.",
+                    MessageType.Info);
+            }
+            else
+            {
+                // The mock lists synchronously, so the task is already complete.
+                var files = CouchGamesSdk.Experience.ListFilesAsync().Result;
+                EditorGUILayout.LabelField("Files", files.Count == 0 ? "(none)" : string.Join(", ", files));
+                if (GUILayout.Button("Reveal Folder"))
+                    EditorUtility.RevealInFinder(experienceDirectory);
+            }
+
+            EditorGUILayout.Space();
             EditorGUILayout.LabelField("Inject Event", EditorStyles.boldLabel);
             _senderUserId = EditorGUILayout.TextField("Sender user ID", _senderUserId);
             _eventName = EditorGUILayout.TextField("Event", _eventName);

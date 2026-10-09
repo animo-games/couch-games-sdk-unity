@@ -1,3 +1,6 @@
+using System.IO;
+using UnityEngine;
+
 namespace Animo.CouchGames
 {
     /// <summary>
@@ -8,6 +11,40 @@ namespace Animo.CouchGames
     /// </summary>
     public static class CouchGamesMock
     {
+        /// <summary>
+        /// Name of the default experience folder: a <c>CouchGamesExperience</c>
+        /// folder at the Unity project root in the Editor, or next to the
+        /// executable's data folder in a standalone build.
+        /// </summary>
+        public const string DefaultExperienceFilesFolderName = "CouchGamesExperience";
+
+        private static string _experienceFilesDirectory;
+
+        /// <summary>
+        /// The local folder that stands in for the current experience's files.
+        /// Every file directly inside it is served by basename through
+        /// <see cref="CouchGamesSdk.Experience"/>; subfolders, dotfiles, and
+        /// Unity <c>.meta</c> files are ignored.
+        ///
+        /// A relative path resolves against the project root in the Editor.
+        /// Set to null to restore the default
+        /// (<see cref="DefaultExperienceFilesFolderName"/>). Read on every call,
+        /// so files added or removed while playing show up immediately.
+        /// </summary>
+        public static string ExperienceFilesDirectory
+        {
+            get
+            {
+                var root = Path.GetDirectoryName(Application.dataPath) ?? ".";
+                if (string.IsNullOrEmpty(_experienceFilesDirectory))
+                    return Path.Combine(root, DefaultExperienceFilesFolderName);
+                return Path.IsPathRooted(_experienceFilesDirectory)
+                    ? _experienceFilesDirectory
+                    : Path.GetFullPath(Path.Combine(root, _experienceFilesDirectory));
+            }
+            set => _experienceFilesDirectory = value;
+        }
+
         /// <summary>
         /// Pretend this session never read the stored save, so the next
         /// whole-document <see cref="CouchGamesSdk.SaveGameAsync{T}"/> is

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Added `CouchGamesSdk.Experience` for reading the current experience's files
+  by basename: `ListFilesAsync`, `HasFile`, `GetFileAsync`, `GetFileTextAsync`,
+  and `GetFileJsonAsync<T>`.
+- The WebGL bridge reads files through `window.CouchGames.experience`, copying
+  bytes over the wasm heap and accepting buffers from the parent page's realm.
+- Added `CouchGamesMock.ExperienceFilesDirectory` so a local folder (default
+  `CouchGamesExperience` at the project root) stands in for experience files
+  in the Editor and standalone builds.
+- Added an Experience Files section to the mock lobby window.
+
 ## 0.2.0
 
 - Added `CouchGamesSdk.LoadSaveResultAsync` and `CouchGamesSaveLoadResult`, the

@@ -168,6 +168,81 @@ mergeInto(LibraryManager.library, {
         return buffer;
     },
 
+    CGU_ExperienceListFiles: function () {
+        var api = window.CouchGames && window.CouchGames.experience;
+        var files = [];
+        // Older platform builds have no experience namespace; report no files
+        // rather than throwing.
+        if (api && typeof api.listFiles === 'function') {
+            try {
+                var names = api.listFiles();
+                if (names) {
+                    for (var i = 0; i < names.length; i++)
+                        files.push(String(names[i]));
+                }
+            } catch (error) {
+                console.warn('[CouchGames Unity] experience.listFiles failed', error);
+            }
+        }
+        var json = JSON.stringify({ files: files });
+        var size = lengthBytesUTF8(json) + 1;
+        var buffer = _malloc(size);
+        stringToUTF8(json, buffer, size);
+        return buffer;
+    },
+
+    CGU_ExperienceGetFile: function (fileNamePtr, objectPtr, callbackPtr, requestId) {
+        var fileName = UTF8ToString(fileNamePtr);
+        var objectName = UTF8ToString(objectPtr);
+        var callback = UTF8ToString(callbackPtr);
+
+        function fail(error) {
+            SendMessage(objectName, callback, JSON.stringify({
+                requestId: requestId, success: false, error: String(error), pointer: 0, length: 0
+            }));
+        }
+
+        // The platform resolves with a bare ArrayBuffer built by the PARENT
+        // page's realm, so `instanceof ArrayBuffer` is false here. Typed-array
+        // constructors accept buffers from any realm; the byteLength check
+        // keeps a non-buffer from becoming a successful zero-byte read.
+        function toBytes(value) {
+            if (!value || typeof value.byteLength !== 'number')
+                return null;
+            if (value.buffer && typeof value.byteOffset === 'number')
+                return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+            return new Uint8Array(value);
+        }
+
+        try {
+            var api = window.CouchGames && window.CouchGames.experience;
+            if (!api || typeof api.getFile !== 'function') {
+                fail('CouchGames.experience.getFile is unavailable');
+                return;
+            }
+            Promise.resolve(api.getFile(fileName))
+                .then(function (value) {
+                    var bytes = toBytes(value);
+                    if (!bytes) {
+                        fail("Expected an ArrayBuffer for '" + fileName + "'");
+                        return;
+                    }
+                    // Handed to C# on the wasm heap; C# copies it out and frees it.
+                    var pointer = bytes.length > 0 ? _malloc(bytes.length) : 0;
+                    if (bytes.length > 0)
+                        HEAPU8.set(bytes, pointer);
+                    SendMessage(objectName, callback, JSON.stringify({
+                        requestId: requestId, success: true, error: '', pointer: pointer, length: bytes.length
+                    }));
+                })
+                .catch(function (error) {
+                    fail(error && error.message ? error.message : String(error));
+                });
+        } catch (error) {
+            fail(error && error.message ? error.message : String(error));
+        }
+    },
+
     CGU_Free: function (pointer) {
         if (pointer)
             _free(pointer);

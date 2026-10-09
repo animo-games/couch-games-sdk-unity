@@ -184,6 +184,81 @@ Broadcast events reach every other client. The sender does not receive its own
 event back. An optional `CouchLobbyTarget` can filter by `UserId`, `Role`, or
 both; both conditions must match.
 
+## Experience files
+
+An experience is a dated content drop for your game -- a level pack, a room,
+a puzzle set -- uploaded on the platform. `CouchGamesSdk.Experience` reads its
+files **by basename**, never by URL: the URL embeds an experience id that
+rotates, so code that keys off it breaks the next day.
+
+```csharp
+[Serializable]
+public sealed class LevelData
+{
+    public string name;
+    public int[] tiles;
+}
+
+var levels = new List<LevelData>();
+foreach (var fileName in await CouchGamesSdk.Experience.ListFilesAsync())
+{
+    if (!fileName.EndsWith(".json"))
+        continue;
+    var level = await CouchGamesSdk.Experience.GetFileJsonAsync<LevelData>(fileName);
+    if (level != null)
+        levels.Add(level);
+}
+```
+
+| Member | Returns |
+| --- | --- |
+| `ListFilesAsync()` | Every basename on the current experience, in upload order |
+| `HasFile(name)` | Whether that basename is on the current experience |
+| `GetFileAsync(name)` | The file's bytes, or `null` on failure |
+| `GetFileTextAsync(name)` | The file decoded as UTF-8 (byte-order mark removed), or `null` on failure |
+| `GetFileJsonAsync<T>(name)` | The file parsed with `JsonUtility`, or `default` on failure |
+
+Delivery is race-free: the platform keeps the bytes, so `GetFileAsync`
+resolves whether the download finished before or after you asked. There is no
+event to wait for.
+
+Failures -- an unknown name, a failed download, an experience that rotated
+mid-flight, or JSON that does not parse -- return `null`/`default` and log the
+reason with `Debug.LogError`. A zero-byte file returns an empty array, not
+`null`. On a platform build that predates experience files, `ListFilesAsync()`
+returns an empty list.
+
+`GetFileJsonAsync<T>` uses `JsonUtility`, which only reads an **object** at the
+top level. For a file whose root is an array, wrap it in an object or read it
+with `GetFileTextAsync` and a parser of your choice.
+
+### Trying it without the platform
+
+In the Editor and standalone builds, the mock serves a local folder as the
+experience. By default it is a `CouchGamesExperience` folder at the Unity
+project root (outside `Assets`, so the files are not imported or shipped). In a
+standalone build the default sits next to the executable's data folder.
+
+```
+MyGame/
+  Assets/
+  CouchGamesExperience/
+    level-01.json
+    level-02.json
+```
+
+Point it elsewhere before reading files, for example at your level build
+output. A relative path resolves against the project root:
+
+```csharp
+CouchGamesMock.ExperienceFilesDirectory = "Build/Levels";
+CouchGamesMock.ExperienceFilesDirectory = null;   // back to the default
+```
+
+Every file directly inside the folder is served by basename. Subfolders,
+dotfiles, and Unity `.meta` files are ignored. The folder is read on every
+call, so files you add while playing show up immediately.
+
 ## Local testing
 
 Open **Window > Couch Games > Mock Lobby** to add fake guests and inject lobby
@@ -191,13 +266,15 @@ events. Classic calls persist beneath Unity's `Application.persistentDataPath`.
 The **Saves** section shows the stored save's revision and exposes the
 `CouchGamesMock` knobs above (simulate an unavailable load, simulate joining
 as a guest, force the next save to be refused, or clear all mock data) as
-toggles and buttons.
+toggles and buttons. The **Experience Files** section shows the mock
+experience folder and the files it serves.
 
 ## Supported platform API
 
 - saves
 - gameplay lifecycle
 - experience data/date
+- experience files
 - game metadata
 - achievements
 - session statistics
