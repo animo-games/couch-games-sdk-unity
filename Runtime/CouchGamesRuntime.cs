@@ -20,6 +20,8 @@ namespace Animo.CouchGames
 
         private readonly Dictionary<int, TaskCompletionSource<BridgeResponse>> _requests =
             new Dictionary<int, TaskCompletionSource<BridgeResponse>>();
+        private readonly Dictionary<int, TaskCompletionSource<ExperienceFileResult>> _fileRequests =
+            new Dictionary<int, TaskCompletionSource<ExperienceFileResult>>();
         private readonly List<CouchLobbyPlayer> _mockPlayers = new List<CouchLobbyPlayer>();
         private MockStore _mockStore;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -162,6 +164,105 @@ namespace Animo.CouchGames
 #else
             return null;
 #endif
+        }
+
+        // --- Experience files ---
+
+        internal IReadOnlyList<string> ExperienceListFiles()
+        {
+            if (IsMock)
+                return MockExperienceListFiles();
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var json = PointerToStringAndFree(CGU_ExperienceListFiles());
+            if (string.IsNullOrEmpty(json))
+                return Array.Empty<string>();
+            var envelope = JsonUtility.FromJson<ExperienceListEnvelope>(json);
+            return envelope?.files ?? Array.Empty<string>();
+#else
+            return Array.Empty<string>();
+#endif
+        }
+
+        internal Task<ExperienceFileResult> ExperienceGetFileAsync(string fileName)
+        {
+            if (IsMock)
+                return Task.FromResult(MockExperienceGetFile(fileName));
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var id = ++_requestId;
+            var completion = new TaskCompletionSource<ExperienceFileResult>();
+            _fileRequests[id] = completion;
+            CGU_ExperienceGetFile(fileName ?? "", gameObject.name, nameof(OnCouchGamesExperienceFile), id);
+            return completion.Task;
+#else
+            return Task.FromResult(ExperienceFileResult.Failed("Couch Games is unavailable."));
+#endif
+        }
+
+        // Served from a local folder, so an experience can be built and played
+        // in the Editor before it is ever uploaded. Sorted, because the folder
+        // has no upload order to reproduce.
+        private static IReadOnlyList<string> MockExperienceListFiles()
+        {
+            var directory = CouchGamesMock.ExperienceFilesDirectory;
+            try
+            {
+                if (!Directory.Exists(directory))
+                    return Array.Empty<string>();
+                return Directory.GetFiles(directory)
+                    .Select(Path.GetFileName)
+                    .Where(IsMockExperiencePayload)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .ToArray();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Couch Games mock experience folder could not be read: {exception.Message}");
+                return Array.Empty<string>();
+            }
+        }
+
+        private static ExperienceFileResult MockExperienceGetFile(string fileName)
+        {
+            if (!IsBasename(fileName))
+            {
+                // Basenames only, matching the platform. A path would escape
+                // the folder.
+                return ExperienceFileResult.Failed($"Not a basename: '{fileName}'");
+            }
+            if (!IsMockExperiencePayload(fileName))
+                return ExperienceFileResult.Failed($"Not an experience file: '{fileName}'");
+
+            var path = Path.Combine(CouchGamesMock.ExperienceFilesDirectory, fileName);
+            try
+            {
+                if (!File.Exists(path))
+                    return ExperienceFileResult.Failed($"No file at {path}");
+                return ExperienceFileResult.Ok(File.ReadAllBytes(path));
+            }
+            catch (Exception exception)
+            {
+                return ExperienceFileResult.Failed(exception.Message);
+            }
+        }
+
+        private static bool IsBasename(string fileName)
+        {
+            return !string.IsNullOrEmpty(fileName) &&
+                   fileName != "." &&
+                   fileName != ".." &&
+                   fileName.IndexOf('/') < 0 &&
+                   fileName.IndexOf('\\') < 0 &&
+                   fileName.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+        }
+
+        // Unity writes .meta siblings if the folder sits under Assets, and
+        // dotfiles are OS clutter. Neither is a payload.
+        private static bool IsMockExperiencePayload(string fileName)
+        {
+            return !fileName.StartsWith(".", StringComparison.Ordinal) &&
+                   !fileName.EndsWith(".meta", StringComparison.OrdinalIgnoreCase);
         }
 
         internal CouchGamesResponse SaveMock(
@@ -415,6 +516,47 @@ namespace Animo.CouchGames
             completion.TrySetResult(message);
         }
 
+        // Called by the WebGL bridge through SendMessage. The bytes travel in
+        // a buffer the bridge allocated on the wasm heap; this side copies
+        // them out and frees it.
+        public void OnCouchGamesExperienceFile(string json)
+        {
+            ExperienceFileEnvelope message;
+            try
+            {
+                message = JsonUtility.FromJson<ExperienceFileEnvelope>(json);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                return;
+            }
+            if (message == null)
+                return;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var pointer = new IntPtr(message.pointer);
+            byte[] bytes = null;
+            if (message.success)
+            {
+                bytes = new byte[Math.Max(0, message.length)];
+                if (pointer != IntPtr.Zero && bytes.Length > 0)
+                    Marshal.Copy(pointer, bytes, 0, bytes.Length);
+            }
+            if (pointer != IntPtr.Zero)
+                CGU_Free(pointer);
+#else
+            var bytes = message.success ? Array.Empty<byte>() : null;
+#endif
+
+            if (!_fileRequests.TryGetValue(message.requestId, out var completion))
+                return;
+            _fileRequests.Remove(message.requestId);
+            completion.TrySetResult(message.success
+                ? ExperienceFileResult.Ok(bytes)
+                : ExperienceFileResult.Failed(message.error));
+        }
+
         public void OnCouchGamesLobbyEvent(string json)
         {
             var message = JsonUtility.FromJson<LobbyEventEnvelope>(json);
@@ -626,6 +768,9 @@ namespace Animo.CouchGames
             string eventName, string dataJson, string targetJson);
         [DllImport("__Internal")] private static extern IntPtr CGU_LoadLatestSaveSync();
         [DllImport("__Internal")] private static extern IntPtr CGU_GetExperienceDateSync();
+        [DllImport("__Internal")] private static extern IntPtr CGU_ExperienceListFiles();
+        [DllImport("__Internal")] private static extern void CGU_ExperienceGetFile(
+            string fileName, string gameObjectName, string callbackMethod, int requestId);
         [DllImport("__Internal")] private static extern void CGU_Free(IntPtr pointer);
 #endif
 
@@ -662,6 +807,22 @@ namespace Animo.CouchGames
         private sealed class MockAchievementsEnvelope
         {
             public MockAchievement[] achievements;
+        }
+
+        [Serializable]
+        private sealed class ExperienceListEnvelope
+        {
+            public string[] files = null;
+        }
+
+        [Serializable]
+        private sealed class ExperienceFileEnvelope
+        {
+            public int requestId = 0;
+            public bool success = false;
+            public string error = "";
+            public int pointer = 0;
+            public int length = 0;
         }
 
         [Serializable]

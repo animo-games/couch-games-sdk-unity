@@ -13,6 +13,12 @@ namespace Animo.CouchGames
         public static bool IsMock => CouchGamesRuntime.Instance.IsMock;
         public static string ExperienceDataJson { get; private set; } = "{}";
         public static CouchGamesLobby Lobby { get; } = new CouchGamesLobby();
+
+        /// <summary>
+        /// Files on the current experience, addressed by basename. See
+        /// <see cref="CouchGamesExperience"/>.
+        /// </summary>
+        public static CouchGamesExperience Experience { get; } = new CouchGamesExperience();
         public static CouchLobbyPlayer LocalPlayer { get; internal set; }
 
         public static Task InitializeAsync()
