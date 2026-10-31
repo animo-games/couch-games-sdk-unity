@@ -145,6 +145,26 @@ namespace Animo.CouchGames
             return CouchGamesRuntime.Instance.InvokeAsync("getExperienceData", "[]");
         }
 
+        /// <summary>
+        /// Lists openable challenges, oldest first, with this player's state.
+        /// Call when opening the archive, not every frame: this is a server round trip.
+        /// </summary>
+        public static Task<CouchGamesResponse> ListExperiencesAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("listExperiences", "[]");
+        }
+
+        /// <summary>
+        /// Switches to a listed experience. Make no SDK calls until
+        /// <see cref="CouchGamesLobby.ExperienceChangedEventName"/> arrives or
+        /// this call returns Success = false. On success the event has already run.
+        /// </summary>
+        public static Task<CouchGamesResponse> OpenExperienceAsync(string experienceId)
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync(
+                "openExperience", JsonArray(JsonString(experienceId)));
+        }
+
         public static Task<CouchGamesResponse> GetExperienceDateAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("getExperienceDate", "[]");

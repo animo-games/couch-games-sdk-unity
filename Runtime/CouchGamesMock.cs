@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using UnityEngine;
 
@@ -19,6 +21,23 @@ namespace Animo.CouchGames
         public const string DefaultExperienceFilesFolderName = "CouchGamesExperience";
 
         private static string _experienceFilesDirectory;
+
+        /// <summary>
+        /// Openable challenges in oldest-first order. Configure before opening
+        /// the archive; an empty list also simulates the campaign-first lock's list.
+        /// The mock starts on "mock-experience" with a ready session.
+        /// </summary>
+        public static IList<CouchGamesMockExperience> Experiences { get; } =
+            new List<CouchGamesMockExperience>
+            {
+                new CouchGamesMockExperience
+                {
+                    Id = "mock-experience",
+                    Title = "Mock Experience",
+                    ActivatedAt = "2026-01-01T00:00:00.000Z",
+                    Live = true
+                }
+            };
 
         /// <summary>
         /// The local folder that stands in for the current experience's files.
@@ -88,5 +107,40 @@ namespace Animo.CouchGames
         {
             CouchGamesRuntime.Instance.ClearMockData();
         }
+    }
+
+    /// <summary>
+    /// An entry in <see cref="CouchGamesMock.Experiences"/>. Nullable values
+    /// are written explicitly because JsonUtility does not support nullable integers.
+    /// </summary>
+    public sealed class CouchGamesMockExperience
+    {
+        public string Id { get; set; }
+        public int? ExperienceIndex { get; set; }
+        public int? Number { get; set; }
+        public string Title { get; set; }
+        public string ActivatedAt { get; set; }
+        public bool Live { get; set; }
+        public string State { get; set; } = "none";
+
+        /// <summary>
+        /// Optional files folder for this experience. Null uses the mock's
+        /// configured ExperienceFilesDirectory. Relative paths use the project root.
+        /// </summary>
+        public string FilesDirectory { get; set; }
+
+        internal string ToJson()
+        {
+            return "{\"id\":" + CouchGamesSdk.JsonString(Id) +
+                   ",\"experienceIndex\":" + IndexJson +
+                   ",\"number\":" + NumberJson +
+                   ",\"title\":" + CouchGamesSdk.JsonString(Title) +
+                   ",\"activatedAt\":" + CouchGamesSdk.JsonString(ActivatedAt) +
+                   ",\"live\":" + (Live ? "true" : "false") +
+                   ",\"state\":" + CouchGamesSdk.JsonString(State) + "}";
+        }
+
+        internal string IndexJson => ExperienceIndex?.ToString(CultureInfo.InvariantCulture) ?? "null";
+        internal string NumberJson => Number?.ToString(CultureInfo.InvariantCulture) ?? "null";
     }
 }
