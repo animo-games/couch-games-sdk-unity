@@ -7,10 +7,11 @@
 - Added `CouchGamesLobby.ExperienceChangedEventName` for the reserved
   `couchgames:experience-changed` event delivered through `EventReceived`,
   including solo games.
-- Added a configurable mock archive with synchronous switching, per-experience
-  persisted data, optional files folders, and the reserved event before success.
-- Documented archive payloads, switching refusals, event handling and the rule
-  to wait for the event or failure before making further SDK calls.
+- Added `CouchGamesMock.Experiences`, a configurable mock archive whose
+  synchronous switch raises the reserved event before answering success.
+- Documented the archive payload, co-op switching, the refusals, event
+  handling and the rule to wait for the event or a failure before making
+  further SDK calls.
 
 ## 0.3.0
 

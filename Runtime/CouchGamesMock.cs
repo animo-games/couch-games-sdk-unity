@@ -23,9 +23,9 @@ namespace Animo.CouchGames
         private static string _experienceFilesDirectory;
 
         /// <summary>
-        /// Openable challenges in oldest-first order. Configure before opening
-        /// the archive; an empty list also simulates the campaign-first lock's list.
-        /// The mock starts on "mock-experience" with a ready session.
+        /// The challenges the mock archive lists, oldest first. The mock starts
+        /// on "mock-experience"; an empty list stands in for the campaign-first
+        /// lock. Lives in memory only: configure it each run.
         /// </summary>
         public static IList<CouchGamesMockExperience> Experiences { get; } =
             new List<CouchGamesMockExperience>
@@ -122,12 +122,6 @@ namespace Animo.CouchGames
         public string ActivatedAt { get; set; }
         public bool Live { get; set; }
         public string State { get; set; } = "none";
-
-        /// <summary>
-        /// Optional files folder for this experience. Null uses the mock's
-        /// configured ExperienceFilesDirectory. Relative paths use the project root.
-        /// </summary>
-        public string FilesDirectory { get; set; }
 
         internal string ToJson()
         {

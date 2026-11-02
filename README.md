@@ -75,7 +75,7 @@ its empty payload is ambiguous -- it means any of:
   purpose (a co-op guest must see the host's board, not their solo game).
 
 Only the first makes it safe to start fresh. Code that reads the other two as
-"new player" initialises empty state, and its next whole-document save
+"new player" initializes empty state, and its next whole-document save
 destroys real progress -- which is exactly the bug this API exists to
 prevent. Use `LoadLatestSaveAsync`/`LoadLatestSaveSync` only to re-read state
 you have already established.
@@ -285,7 +285,8 @@ experience folder and the files it serves.
 
 `await CouchGamesSdk.ListExperiencesAsync()` returns a `CouchGamesResponse`.
 On `Success`, `PayloadJson` is a JSON array of this game's openable challenges
-(released live or archived experiences, excluding the campaign), oldest first.
+(released live or archived experiences, excluding the campaign), oldest first,
+each with this player's own `state`.
 It works before a session starts. Call it when the archive screen opens, not
 every frame: each call is a server round trip. The list is empty while the
 campaign-first lock holds; anonymous players have `state: "none"` everywhere.
@@ -306,13 +307,23 @@ read top-level arrays or nullable integers. There is no typed experience-data
 or archive wrapper in this package.
 
 `await CouchGamesSdk.OpenExperienceAsync(experienceId)` moves to an id from
-that list. The platform flushes the current saves, starts the new session,
-swaps files and updates the page URL. On success the experience-changed event
-has already been delivered. On `Success == false`, `Error` carries the
-platform's `message`, and no event follows; `RawJson` retains the full response.
+that list without reloading the game. The platform flushes the current saves,
+starts the new session, swaps files and updates the page URL, then raises the
+experience-changed event. On success the event has already been delivered. On
+`Success == false`, `Error` carries the platform's `message` and `RawJson`
+retains the full response.
+
+In a lobby, any member may call it and every member's game switches: the
+platform moves the lobby, then each member's page switches in place and raises
+the event once in that member's game, with `initiatedByMe` true only for the
+caller. So in co-op the handover below can begin in your game without it
+calling `OpenExperienceAsync`; the event ends it. If two members call at once,
+the first switch wins and the other caller gets `Success == false` but still
+gets the event for the first. After `The lobby did not answer`, the switch may
+still happen, and the event says so.
 
 **After calling `OpenExperienceAsync`, do nothing with the SDK until
-`couchgames:experience-changed` arrives or the call answers `success: false`;
+`couchgames:experience-changed` arrives or the call answers `Success == false`;
 requests meanwhile are refused with `Experience switch in progress`.**
 `LoadSaveResultAsync()` reports unavailable with that message. The platform
 exempts tracking/flushing, save flushing, lobby calls and signaling; the safe
@@ -320,11 +331,22 @@ game-side rule is to wait. Synchronous cached getters are not a readiness
 signal: the save cache is empty during handover and the date stays old until
 the event.
 
-Switching is **solo-only in the current platform**. A lobby returns
-`Switching needs the lobby; coming in a later update`. Other refusals include
-`Experience id required`, `Already on this experience`, `Unknown experience`,
-`This experience can't be opened`, `Challenges are locked until the campaign is finished`,
-`Experience switch in progress`, `No session yet`, and `Switching is not available here`.
+Refusals arrive as `Success == false` with the reason in `Error`, and no event
+follows unless the lobby moved anyway (above):
+
+| `Error` | When |
+| --- | --- |
+| `Experience id required` | The id is missing |
+| `Already on this experience` | The id is the experience the game is on |
+| `Unknown experience` | Not one of this game's openable experiences, or, in a lobby, a tester-only experience |
+| `This experience can't be opened` | Not released yet, or not openable from the archive |
+| `Challenges are locked until the campaign is finished` | The campaign-first lock holds |
+| `Experience switch in progress` | Another switch has not finished, or another lobby member's switch got there first |
+| `No session yet` | Called before the first session started, or, in a lobby, before playing the lobby's current experience |
+| `The lobby did not answer` | The lobby did not confirm the switch in time; it may still happen |
+| `Catalog unavailable` | The lobby could not read the experience catalog |
+| `Switching is not available here` | The page cannot switch (developer preview, or its lobby connection is down) |
+
 The campaign-lock refusal starts a fresh session on the current experience.
 A separate build per experience reloads the target as a fresh start and sends
 no change event to the old build.
@@ -358,17 +380,16 @@ experience data/date and gameplay completion refer to the new experience.
 Read the new experience from the event or `GetExperienceDataAsync()`;
 `Lobby.CurrentGame` is lobby-only and null solo on the platform.
 
-When the platform supports co-op switching, this event can also arrive because
-another member switched, with `initiatedByMe: false`. Handle the event even
-when your game did not initiate a switch. The current platform refuses lobby
-switches, so this is forward-compatible event handling, not current group
-switching support.
+In a lobby the event can also arrive because another member switched, with
+`initiatedByMe: false`. Handle it the same way: your handler should not depend
+on this game having called `OpenExperienceAsync` itself.
 
 ### Trying archive switching without the platform
 
-Configure `CouchGamesMock.Experiences` in oldest-first order. Each entry is
-openable; an empty list can stand in for the campaign lock's empty archive.
-For example, add an archived challenge to the default entry:
+`CouchGamesMock.Experiences` is the list the mock archive returns, oldest
+first. It starts with the mock's own `mock-experience` entry; add entries to
+make them openable, or clear it to stand in for the campaign lock's empty
+archive. It lives in memory, so set it up each run:
 
 ```csharp
 CouchGamesMock.Experiences.Add(new CouchGamesMockExperience
@@ -379,22 +400,15 @@ CouchGamesMock.Experiences.Add(new CouchGamesMockExperience
     Title = "First daily",
     ActivatedAt = "2026-01-02T00:00:00.000Z",
     Live = false,
-    State = "none",
-    FilesDirectory = "CouchGamesExperience/Archive1"
+    State = "none"
 });
 ```
 
-The mock starts with a ready session on `mock-experience`. Switching updates
-its data/date, uses the entry's `FilesDirectory` (or the shared
-`CouchGamesMock.ExperienceFilesDirectory` when omitted), and isolates persisted
-saves, metadata and statistics per experience. Opening marks an unstarted
-entry as started; gameplay completion marks it completed. The configurable
-list and its states live in memory; set them up each run. `ClearData()` clears
-all persisted experience stores and returns to the default experience.
-
-The reserved event is injected through the mock lobby-event path before the
-successful task completes, with `initiatedByMe: true` and no sender. Missing,
-current and unknown ids fail without an event. Added mock guests simulate the
-lobby refusal; `SimulateHostAuthoritative` simulates the joined-guest refusal.
-The switch is synchronous, so the mock does not simulate an in-flight refusal
-window, network errors, release eligibility, or the campaign-lock session reset.
+Opening a listed id updates the mock's experience data and date and raises the
+reserved event through the usual mock lobby-event path, with
+`initiatedByMe: true` and no sender, before the task completes with success.
+Missing, current and unknown ids fail without an event. This is a lightweight
+simulation: files still come from `CouchGamesMock.ExperienceFilesDirectory`,
+saves and metadata keep their shared mock storage, and the switch is
+synchronous, so there is no in-flight refusal window, no other-member switch,
+and no campaign-lock session reset.
