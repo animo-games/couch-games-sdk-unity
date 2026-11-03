@@ -24,6 +24,8 @@ namespace Animo.CouchGames
             new Dictionary<int, TaskCompletionSource<ExperienceFileResult>>();
         private readonly List<CouchLobbyPlayer> _mockPlayers = new List<CouchLobbyPlayer>();
         private MockStore _mockStore;
+        private string _mockExperienceId = "mock-experience";
+        private CouchGamesMockExperience _mockExperience;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private int _requestId;
 #endif
@@ -116,7 +118,7 @@ namespace Animo.CouchGames
         internal async Task<CouchGamesResponse> InvokeAsync(string method, string argumentsJson)
         {
             if (IsMock)
-                return InvokeMock(method);
+                return InvokeMock(method, argumentsJson);
 
             var bridge = await InvokeBridgeAsync(method, argumentsJson);
             return new CouchGamesResponse(
@@ -126,7 +128,8 @@ namespace Animo.CouchGames
                 bridge.rawJson,
                 bridge.persisted,
                 bridge.conflict,
-                bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null);
+                bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null,
+                bridge.hasStreak ? bridge.streak : (int?)null);
         }
 
         internal Task<BridgeResponse> InvokeBridgeAsync(string method, string argumentsJson)
@@ -392,6 +395,7 @@ namespace Animo.CouchGames
         {
             RequireMock();
             _mockStore = new MockStore();
+            SetMockExperience("mock-experience");
             _mockSessionKnownRevision = 0;
             try
             {
@@ -587,6 +591,7 @@ namespace Animo.CouchGames
         private void InitializeMock()
         {
             _mockStore = LoadMock();
+            _mockExperience = CouchGamesMock.Experiences.FirstOrDefault(item => item?.Id == _mockExperienceId);
             // The platform hands a session its save at startup, so the editor's
             // normal save-without-loading flow keeps working.
             _mockSessionKnownRevision = StoredMockRevision();
@@ -610,7 +615,7 @@ namespace Animo.CouchGames
             PublishMockPlayers();
         }
 
-        private CouchGamesResponse InvokeMock(string method)
+        private CouchGamesResponse InvokeMock(string method, string argumentsJson)
         {
             switch (method)
             {
@@ -629,12 +634,32 @@ namespace Animo.CouchGames
                     FoldGameplayTime();
                     _mockStore.gameplayCompleted = true;
                     PersistMock();
-                    return CouchGamesResponse.Ok();
+                    return new CouchGamesResponse(true, "", "{}", "{}", streak: CouchGamesMock.Streak);
                 case "getExperienceData":
+                    if (_mockExperience != null)
+                    {
+                        return CouchGamesResponse.Ok(
+                            "{\"experienceId\":" + CouchGamesSdk.JsonString(_mockExperienceId) +
+                            ",\"experienceIndex\":" +
+                            (_mockExperience.ExperienceIndex ?? 0).ToString(CultureInfo.InvariantCulture) +
+                            ",\"number\":" + _mockExperience.NumberJson +
+                            ",\"experienceName\":" + CouchGamesSdk.JsonString(_mockExperience.Title) +
+                            ",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
+                    }
                     return CouchGamesResponse.Ok(
-                        "{\"experienceName\":\"Mock Experience\",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
+                        "{\"number\":null,\"experienceName\":\"Mock Experience\",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
+                case "listExperiences":
+                    var listJson = CouchGamesSdk.JsonArray(CouchGamesMock.Experiences
+                        .Where(item => item != null)
+                        .Select(item => item.ToJson(_mockPlayers, CouchGamesSdk.LocalPlayer?.UserId))
+                        .ToArray());
+                    return new CouchGamesResponse(true, "", listJson, listJson, streak: CouchGamesMock.Streak);
+                case "openExperience":
+                    var arguments = JsonUtility.FromJson<MockStringArguments>("{\"values\":" + argumentsJson + "}");
+                    return OpenMockExperience(arguments?.values?.FirstOrDefault());
                 case "getExperienceDate":
-                    return CouchGamesResponse.Ok(CouchGamesSdk.JsonString(_mockStore.experienceDate));
+                    return CouchGamesResponse.Ok(CouchGamesSdk.JsonString(
+                        _mockExperience != null ? _mockExperience.ActivatedAt : _mockStore.experienceDate));
                 case "getGameMetadata":
                     return CouchGamesResponse.Ok(BuildMetadataJson());
                 case "getAchievements":
@@ -649,6 +674,40 @@ namespace Animo.CouchGames
                 default:
                     return CouchGamesResponse.Failed($"Mock call '{method}' requires typed arguments or is unsupported.");
             }
+        }
+
+        private void SetMockExperience(string experienceId)
+        {
+            _mockExperienceId = experienceId;
+            _mockExperience = CouchGamesMock.Experiences.FirstOrDefault(item => item?.Id == experienceId);
+            if (CouchGamesSdk.Lobby.CurrentGame != null)
+                CouchGamesSdk.Lobby.CurrentGame.experienceId = experienceId;
+        }
+
+        // The mock switches synchronously: experience data and date already
+        // answer for the new experience when handlers run, and handlers run
+        // before the call answers success. Files, saves and metadata stay
+        // shared across mock experiences.
+        private CouchGamesResponse OpenMockExperience(string experienceId)
+        {
+            if (string.IsNullOrEmpty(experienceId))
+                return CouchGamesResponse.Failed("Experience id required");
+            if (experienceId == _mockExperienceId)
+                return CouchGamesResponse.Failed("Already on this experience");
+            var experience = CouchGamesMock.Experiences.FirstOrDefault(item => item?.Id == experienceId);
+            if (experience == null)
+                return CouchGamesResponse.Failed("Unknown experience");
+
+            FoldGameplayTime();
+            SetMockExperience(experienceId);
+
+            var dataJson = "{\"experienceId\":" + CouchGamesSdk.JsonString(experienceId) +
+                           ",\"experienceIndex\":" + experience.IndexJson +
+                           ",\"number\":" + experience.NumberJson +
+                           ",\"activatedAt\":" + CouchGamesSdk.JsonString(experience.ActivatedAt) +
+                           ",\"initiatedByMe\":true}";
+            SimulateMockEvent(CouchGamesLobby.ExperienceChangedEventName, dataJson, null, null);
+            return CouchGamesResponse.Ok();
         }
 
         private string BuildMetadataJson()
@@ -786,6 +845,12 @@ namespace Animo.CouchGames
             public bool gameplayCompleted;
             public List<MockMetadataEntry> metadata = new List<MockMetadataEntry>();
             public List<MockAchievement> achievements = new List<MockAchievement>();
+        }
+
+        [Serializable]
+        private sealed class MockStringArguments
+        {
+            public string[] values = null;
         }
 
         [Serializable]

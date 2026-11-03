@@ -75,7 +75,7 @@ its empty payload is ambiguous -- it means any of:
   purpose (a co-op guest must see the host's board, not their solo game).
 
 Only the first makes it safe to start fresh. Code that reads the other two as
-"new player" initialises empty state, and its next whole-document save
+"new player" initializes empty state, and its next whole-document save
 destroys real progress -- which is exactly the bug this API exists to
 prevent. Use `LoadLatestSaveAsync`/`LoadLatestSaveSync` only to re-read state
 you have already established.
@@ -271,6 +271,7 @@ experience folder and the files it serves.
 
 ## Supported platform API
 
+- `ListExperiencesAsync()` and `OpenExperienceAsync(experienceId)` (see below)
 - saves
 - gameplay lifecycle
 - experience data/date
@@ -279,3 +280,181 @@ experience folder and the files it serves.
 - achievements
 - session statistics
 - lobby roster, identity, current game, and tunneled events
+
+### Gameplay completion and the streak
+
+`await CouchGamesSdk.GameplayCompleteAsync()` records a completion for the
+current experience. The response's `Streak` is the player's current streak in
+this game (challenges completed in a row, each before the next went live),
+with this completion already counted, so a live challenge just finished shows
+the new count; a completion from the archive doesn't add to it. Guests get
+`0`, and so does a refused completion (`Success == false`). `0` can also mean
+the platform couldn't read the streak just then, so don't treat it as proof
+the streak broke. A second seat on the host's own account records nothing and
+answers the account's current streak. `Streak` is null when the platform
+didn't send one (an older build): treat that as unknown.
+
+### Experience data
+
+`await CouchGamesSdk.GetExperienceDataAsync()` returns the current
+experience's details as JSON in `PayloadJson`. `number` is the player-facing
+"No. N", the same number the archive list and the switch event carry, or null
+when the experience is unnumbered. `experienceIndex` is the stored index (0
+when unnumbered): show `number` to players, and read it with a JSON parser that
+preserves nullable numbers.
+
+### List and open experiences
+
+`await CouchGamesSdk.ListExperiencesAsync()` returns a `CouchGamesResponse`.
+On `Success`, `PayloadJson` is a JSON array of this game's openable challenges
+(released live or archived experiences, excluding the campaign), oldest first,
+each with this player's own `state` and, in `players`, every lobby member's.
+It works before a session starts. Call it when the archive screen opens, not
+every frame: each call is a server round trip. The list is empty while the
+campaign-first lock holds; anonymous players have `state: "none"` everywhere.
+
+| Payload field | Meaning |
+| --- | --- |
+| `id` | String id to pass to `OpenExperienceAsync` |
+| `experienceIndex` | Stored index reported by `getExperienceData`, or null |
+| `number` | Player-facing "No. N", or null if unnumbered |
+| `title` | Title string, or null |
+| `activatedAt` | ISO instant, or null; use its UTC date for a daily |
+| `live` | Boolean: whether the challenge is live |
+| `state` | This player's `"none"`, `"started"`, or `"completed"` state |
+| `players` | Object mapping each lobby member's `userId` (the ids in `Lobby.Players`), this player included, to that member's state |
+
+Solo, `players` holds only this player. A guest (anonymous) member reads
+`"none"`, and a second seat on the host's own account reads the host's state.
+If the lobby isn't on your game, or can't be confirmed at that moment,
+`players` holds only this player. Use it for "which ones neither of us has
+done".
+
+The response's `Streak` is the player's current streak in this game, `0` for a
+guest, set on every successful answer (the empty list included) and null when
+the platform didn't send one (an older build). `Streak == 0` can also mean the
+streak couldn't be read just then.
+
+Use a JSON parser that preserves nullable numbers and objects for this array.
+`CouchGamesResponse.GetPayload<T>()` uses Unity's `JsonUtility`, which does not
+read top-level arrays, nullable integers or dictionaries. There is no typed experience-data
+or archive wrapper in this package.
+
+`await CouchGamesSdk.OpenExperienceAsync(experienceId)` moves to an id from
+that list without reloading the game. The platform flushes the current saves,
+starts the new session, swaps files and updates the page URL, then raises the
+experience-changed event. On success the event has already been delivered. On
+`Success == false`, `Error` carries the platform's `message` and `RawJson`
+retains the full response.
+
+In a lobby, any member may call it and every member's game switches: the
+platform moves the lobby, then each member's page switches in place and raises
+the event once in that member's game, with `initiatedByMe` true only for the
+caller. So in co-op the handover below can begin in your game without it
+calling `OpenExperienceAsync`; the event ends it. If two members call at once,
+the first switch wins and the other caller gets `Success == false` but still
+gets the event for the first. After `The lobby did not answer`, the switch may
+still happen, and the event says so.
+
+**After calling `OpenExperienceAsync`, do nothing with the SDK until
+`couchgames:experience-changed` arrives or the call answers `Success == false`;
+requests meanwhile are refused with `Experience switch in progress`.**
+`LoadSaveResultAsync()` reports unavailable with that message. The platform
+exempts tracking/flushing, save flushing, lobby calls and signaling; the safe
+game-side rule is to wait. Synchronous cached getters are not a readiness
+signal: the save cache is empty during handover and the date stays old until
+the event.
+
+Refusals arrive as `Success == false` with the reason in `Error`, and no event
+follows unless the lobby moved anyway (above):
+
+| `Error` | When |
+| --- | --- |
+| `Experience id required` | The id is missing |
+| `Already on this experience` | The id is the experience the game is on |
+| `Unknown experience` | Not one of this game's openable experiences, or, in a lobby, a tester-only experience |
+| `This experience can't be opened` | Not released yet, or not openable from the archive |
+| `Challenges are locked until the campaign is finished` | The campaign-first lock holds |
+| `Experience switch in progress` | Another switch has not finished, or another lobby member's switch got there first |
+| `No session yet` | Called before the first session started, or, in a lobby, before playing the lobby's current experience |
+| `The lobby did not answer` | The lobby did not confirm the switch in time; it may still happen |
+| `Catalog unavailable` | The lobby could not read the experience catalog |
+| `Switching is not available here` | The page cannot switch (developer preview, or its lobby connection is down) |
+
+The campaign-lock refusal starts a fresh session on the current experience.
+A separate build per experience reloads the target as a fresh start and sends
+no change event to the old build.
+
+### `couchgames:experience-changed`
+
+Subscribe through `CouchGamesSdk.Lobby.EventReceived` and compare the name with
+`CouchGamesLobby.ExperienceChangedEventName`. Initialize the SDK to connect
+the event bridge before opening an experience. This reserved event reaches
+solo games too, with an empty `SenderUserId` (no sender).
+
+```csharp
+await CouchGamesSdk.InitializeAsync();
+CouchGamesSdk.Lobby.EventReceived += message =>
+{
+    if (message.EventName != CouchGamesLobby.ExperienceChangedEventName)
+        return;
+    // Clear the board and load the new puzzle here. DataJson has the fields below.
+    Debug.Log(message.DataJson);
+};
+
+var result = await CouchGamesSdk.OpenExperienceAsync(selectedExperienceId);
+if (!result.Success)
+    Debug.LogWarning(result.Error);
+```
+
+The event's `DataJson` contains `experienceId` (string), `experienceIndex`
+(number or null), `number` (number or null), `activatedAt` (ISO instant or
+null), and `initiatedByMe` (boolean). From the event onward, files, saves,
+experience data/date and gameplay completion refer to the new experience.
+Read the new experience from the event or `GetExperienceDataAsync()`;
+`Lobby.CurrentGame` is lobby-only and null solo on the platform.
+`CouchGamesSdk.ExperienceDataJson` refreshes on the event too: the mock's
+already holds the new experience when your handler runs, while on the platform
+it catches up once its request answers, so don't read it in the handler.
+
+In a lobby the event can also arrive because another member switched, with
+`initiatedByMe: false`. Handle it the same way: your handler should not depend
+on this game having called `OpenExperienceAsync` itself.
+
+### Trying archive switching without the platform
+
+`CouchGamesMock.Experiences` is the list the mock archive returns, oldest
+first. It starts with the mock's own `mock-experience` entry; add entries to
+make them openable, or clear it to stand in for the campaign lock's empty
+archive. It lives in memory, so set it up each run:
+
+```csharp
+CouchGamesMock.Experiences.Add(new CouchGamesMockExperience
+{
+    Id = "mock-archive-1",
+    ExperienceIndex = 1,
+    Number = 1,
+    Title = "First daily",
+    ActivatedAt = "2026-01-02T00:00:00.000Z",
+    Live = false,
+    State = "none",
+    PlayerStates = { ["mock-guest-1"] = "completed" }
+});
+CouchGamesMock.Streak = 3;
+```
+
+`State` is the local player's. Each row's `players` lists every mock lobby
+member (add guests in the Mock Lobby window): the local player at `State`, the
+others at their `PlayerStates` entry by `userId`, or `"none"`.
+`CouchGamesMock.Streak` is the `Streak` the mock answers on the list and on
+`GameplayCompleteAsync()`; the mock doesn't count completions. Mock experience
+data carries the current entry's `number`.
+
+Opening a listed id updates the mock's experience data and date and raises the
+reserved event through the usual mock lobby-event path, with
+`initiatedByMe: true` and no sender, before the task completes with success.
+Missing, current and unknown ids fail without an event. This is a lightweight
+simulation: files still come from `CouchGamesMock.ExperienceFilesDirectory`,
+saves and metadata keep their shared mock storage, and the switch is
+synchronous, so there is no in-flight refusal window, no other-member switch,
+and no campaign-lock session reset.

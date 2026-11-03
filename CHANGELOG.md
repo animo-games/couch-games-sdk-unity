@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Added `CouchGamesSdk.ListExperiencesAsync()` and `OpenExperienceAsync(id)`
+  through the existing generic WebGL bridge.
+- Added `CouchGamesLobby.ExperienceChangedEventName` for the reserved
+  `couchgames:experience-changed` event delivered through `EventReceived`,
+  including solo games.
+- Added `CouchGamesMock.Experiences`, a configurable mock archive whose
+  synchronous switch raises the reserved event before answering success.
+- Added `CouchGamesResponse.Streak`, the player's streak answered by
+  `listExperiences` and `gameplayComplete`. Documented the archive rows'
+  `players` map and experience data's `number`; the mock fakes all three
+  (`CouchGamesMock.Streak`, `CouchGamesMockExperience.PlayerStates`).
+- `CouchGamesSdk.ExperienceDataJson` refreshes on
+  `couchgames:experience-changed`, so it describes the new experience after a
+  switch.
+- Documented the archive payload, co-op switching, the refusals, event
+  handling and the rule to wait for the event or a failure before making
+  further SDK calls.
+
 ## 0.3.0
 
 - Added `CouchGamesSdk.Experience` for reading the current experience's files

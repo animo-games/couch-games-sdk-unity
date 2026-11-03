@@ -7,6 +7,12 @@ namespace Animo.CouchGames
 {
     public sealed class CouchGamesLobby
     {
+        /// <summary>
+        /// A new experience's session is ready. Delivered through EventReceived
+        /// even in solo play, with no sender user id.
+        /// </summary>
+        public const string ExperienceChangedEventName = "couchgames:experience-changed";
+
         private readonly List<CouchLobbyPlayer> _players = new List<CouchLobbyPlayer>();
 
         public event Action<IReadOnlyList<CouchLobbyPlayer>> PlayersChanged;
@@ -110,6 +116,8 @@ namespace Animo.CouchGames
 
         internal void Receive(string eventName, string dataJson, string senderUserId)
         {
+            if (eventName == ExperienceChangedEventName)
+                CouchGamesSdk.RefreshExperienceData();
             EventReceived?.Invoke(new CouchLobbyEvent(eventName, dataJson, senderUserId));
         }
     }

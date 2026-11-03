@@ -74,6 +74,19 @@ namespace Animo.CouchGames
         /// </summary>
         public long? CurrentRevision { get; }
 
+        /// <summary>
+        /// The player's current streak in this game, answered by
+        /// <see cref="CouchGamesSdk.ListExperiencesAsync"/> and
+        /// <see cref="CouchGamesSdk.GameplayCompleteAsync"/>. Null on other
+        /// verbs, and when the platform did not send one (an older build):
+        /// treat that as unknown.
+        ///
+        /// 0 for a guest and on a refused completion. 0 can also mean the
+        /// platform could not read the streak just then, so never treat it as
+        /// proof the streak broke.
+        /// </summary>
+        public int? Streak { get; }
+
         internal CouchGamesResponse(
             bool success,
             string error,
@@ -81,7 +94,8 @@ namespace Animo.CouchGames
             string rawJson,
             bool persisted = false,
             bool conflict = false,
-            long? currentRevision = null)
+            long? currentRevision = null,
+            int? streak = null)
         {
             Success = success;
             Error = error ?? string.Empty;
@@ -90,6 +104,7 @@ namespace Animo.CouchGames
             Persisted = persisted;
             Conflict = conflict;
             CurrentRevision = currentRevision;
+            Streak = streak;
         }
 
         public T GetPayload<T>()
@@ -133,5 +148,7 @@ namespace Animo.CouchGames
         public bool hasRevision = false;
         public long revision = 0;
         public bool hostAuthoritative = false;
+        public bool hasStreak = false;
+        public int streak = 0;
     }
 }

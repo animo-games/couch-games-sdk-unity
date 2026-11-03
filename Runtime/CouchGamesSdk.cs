@@ -7,6 +7,7 @@ namespace Animo.CouchGames
     public static class CouchGamesSdk
     {
         private static Task _initialization;
+        private static int _experienceDataRequest;
 
         public static bool IsInitialized { get; private set; }
         public static bool IsAvailable => CouchGamesRuntime.Instance.IsAvailable;
@@ -135,14 +136,45 @@ namespace Animo.CouchGames
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayEnd", "[]");
         }
 
+        /// <summary>
+        /// Records a completion. <see cref="CouchGamesResponse.Streak"/> carries
+        /// the player's streak with this completion already counted.
+        /// </summary>
         public static Task<CouchGamesResponse> GameplayCompleteAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayComplete", "[]");
         }
 
+        /// <summary>
+        /// The current experience's details. In the payload, <c>number</c> is
+        /// the player-facing "No. N" (null when unnumbered) and
+        /// <c>experienceIndex</c> the stored index.
+        /// </summary>
         public static Task<CouchGamesResponse> GetExperienceDataAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("getExperienceData", "[]");
+        }
+
+        /// <summary>
+        /// Lists openable challenges, oldest first, with this player's state and
+        /// each lobby member's in <c>players</c>. <see cref="CouchGamesResponse.Streak"/>
+        /// carries the player's streak.
+        /// Call when opening the archive, not every frame: this is a server round trip.
+        /// </summary>
+        public static Task<CouchGamesResponse> ListExperiencesAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("listExperiences", "[]");
+        }
+
+        /// <summary>
+        /// Switches to a listed experience. Make no SDK calls until
+        /// <see cref="CouchGamesLobby.ExperienceChangedEventName"/> arrives or
+        /// this call returns Success = false. On success the event has already run.
+        /// </summary>
+        public static Task<CouchGamesResponse> OpenExperienceAsync(string experienceId)
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync(
+                "openExperience", JsonArray(JsonString(experienceId)));
         }
 
         public static Task<CouchGamesResponse> GetExperienceDateAsync()
@@ -242,10 +274,24 @@ namespace Animo.CouchGames
         private static async Task InitializeInternalAsync()
         {
             await CouchGamesRuntime.Instance.InitializeAsync();
-            var response = await GetExperienceDataAsync();
-            if (response.Success && response.PayloadJson != "null")
-                ExperienceDataJson = response.PayloadJson;
+            await RefreshExperienceDataAsync(++_experienceDataRequest);
             IsInitialized = true;
+        }
+
+        // Called on couchgames:experience-changed, before EventReceived
+        // handlers run. The mock answers synchronously, so its handlers already
+        // see the new data; on the platform the cache catches up when the
+        // request answers. Only the latest request may write the cache.
+        internal static void RefreshExperienceData()
+        {
+            _ = RefreshExperienceDataAsync(++_experienceDataRequest);
+        }
+
+        private static async Task RefreshExperienceDataAsync(int request)
+        {
+            var response = await GetExperienceDataAsync();
+            if (request == _experienceDataRequest && response.Success && response.PayloadJson != "null")
+                ExperienceDataJson = response.PayloadJson;
         }
 
         internal static string JsonString(string value)
