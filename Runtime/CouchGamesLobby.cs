@@ -116,6 +116,8 @@ namespace Animo.CouchGames
 
         internal void Receive(string eventName, string dataJson, string senderUserId)
         {
+            if (eventName == ExperienceChangedEventName)
+                CouchGamesSdk.RefreshExperienceData();
             EventReceived?.Invoke(new CouchLobbyEvent(eventName, dataJson, senderUserId));
         }
     }

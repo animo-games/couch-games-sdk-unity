@@ -413,6 +413,9 @@ null), and `initiatedByMe` (boolean). From the event onward, files, saves,
 experience data/date and gameplay completion refer to the new experience.
 Read the new experience from the event or `GetExperienceDataAsync()`;
 `Lobby.CurrentGame` is lobby-only and null solo on the platform.
+`CouchGamesSdk.ExperienceDataJson` refreshes on the event too: the mock's
+already holds the new experience when your handler runs, while on the platform
+it catches up once its request answers, so don't read it in the handler.
 
 In a lobby the event can also arrive because another member switched, with
 `initiatedByMe: false`. Handle it the same way: your handler should not depend

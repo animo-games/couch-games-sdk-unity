@@ -13,6 +13,9 @@
   `listExperiences` and `gameplayComplete`. Documented the archive rows'
   `players` map and experience data's `number`; the mock fakes all three
   (`CouchGamesMock.Streak`, `CouchGamesMockExperience.PlayerStates`).
+- `CouchGamesSdk.ExperienceDataJson` refreshes on
+  `couchgames:experience-changed`, so it describes the new experience after a
+  switch.
 - Documented the archive payload, co-op switching, the refusals, event
   handling and the rule to wait for the event or a failure before making
   further SDK calls.

@@ -7,6 +7,7 @@ namespace Animo.CouchGames
     public static class CouchGamesSdk
     {
         private static Task _initialization;
+        private static int _experienceDataRequest;
 
         public static bool IsInitialized { get; private set; }
         public static bool IsAvailable => CouchGamesRuntime.Instance.IsAvailable;
@@ -273,10 +274,24 @@ namespace Animo.CouchGames
         private static async Task InitializeInternalAsync()
         {
             await CouchGamesRuntime.Instance.InitializeAsync();
-            var response = await GetExperienceDataAsync();
-            if (response.Success && response.PayloadJson != "null")
-                ExperienceDataJson = response.PayloadJson;
+            await RefreshExperienceDataAsync(++_experienceDataRequest);
             IsInitialized = true;
+        }
+
+        // Called on couchgames:experience-changed, before EventReceived
+        // handlers run. The mock answers synchronously, so its handlers already
+        // see the new data; on the platform the cache catches up when the
+        // request answers. Only the latest request may write the cache.
+        internal static void RefreshExperienceData()
+        {
+            _ = RefreshExperienceDataAsync(++_experienceDataRequest);
+        }
+
+        private static async Task RefreshExperienceDataAsync(int request)
+        {
+            var response = await GetExperienceDataAsync();
+            if (request == _experienceDataRequest && response.Success && response.PayloadJson != "null")
+                ExperienceDataJson = response.PayloadJson;
         }
 
         internal static string JsonString(string value)
