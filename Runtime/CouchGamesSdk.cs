@@ -135,18 +135,29 @@ namespace Animo.CouchGames
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayEnd", "[]");
         }
 
+        /// <summary>
+        /// Records a completion. <see cref="CouchGamesResponse.Streak"/> carries
+        /// the player's streak with this completion already counted.
+        /// </summary>
         public static Task<CouchGamesResponse> GameplayCompleteAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayComplete", "[]");
         }
 
+        /// <summary>
+        /// The current experience's details. In the payload, <c>number</c> is
+        /// the player-facing "No. N" (null when unnumbered) and
+        /// <c>experienceIndex</c> the stored index.
+        /// </summary>
         public static Task<CouchGamesResponse> GetExperienceDataAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("getExperienceData", "[]");
         }
 
         /// <summary>
-        /// Lists openable challenges, oldest first, with this player's state.
+        /// Lists openable challenges, oldest first, with this player's state and
+        /// each lobby member's in <c>players</c>. <see cref="CouchGamesResponse.Streak"/>
+        /// carries the player's streak.
         /// Call when opening the archive, not every frame: this is a server round trip.
         /// </summary>
         public static Task<CouchGamesResponse> ListExperiencesAsync()

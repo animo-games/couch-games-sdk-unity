@@ -40,6 +40,10 @@ mergeInto(LibraryManager.library, {
                 isFinite(result.currentRevision);
             var hasRevision = isPlatformResponse && typeof result.revision === 'number' &&
                 isFinite(result.revision);
+            // listExperiences and gameplayComplete answer `streak` beside the
+            // payload; older platform builds omit it.
+            var hasStreak = isPlatformResponse && typeof result.streak === 'number' &&
+                isFinite(result.streak);
             SendMessage(objectName, callback, JSON.stringify({
                 requestId: requestId,
                 success: platformSuccess,
@@ -55,7 +59,9 @@ mergeInto(LibraryManager.library, {
                 metadataJson: JSON.stringify(isPlatformResponse && result.metadata !== undefined ? result.metadata : null),
                 hasRevision: hasRevision,
                 revision: hasRevision ? Math.trunc(result.revision) : 0,
-                hostAuthoritative: isPlatformResponse && result.hostAuthoritative === true
+                hostAuthoritative: isPlatformResponse && result.hostAuthoritative === true,
+                hasStreak: hasStreak,
+                streak: hasStreak ? Math.trunc(result.streak) : 0
             }));
         }
 

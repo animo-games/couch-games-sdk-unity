@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 
 namespace Animo.CouchGames
@@ -38,6 +39,14 @@ namespace Animo.CouchGames
                     Live = true
                 }
             };
+
+        /// <summary>
+        /// The streak the mock answers as <see cref="CouchGamesResponse.Streak"/>
+        /// on <see cref="CouchGamesSdk.ListExperiencesAsync"/> and
+        /// <see cref="CouchGamesSdk.GameplayCompleteAsync"/>. The mock does not
+        /// count completions: set the value you want to show. In memory only.
+        /// </summary>
+        public static int Streak { get; set; }
 
         /// <summary>
         /// The local folder that stands in for the current experience's files.
@@ -112,6 +121,9 @@ namespace Animo.CouchGames
     /// <summary>
     /// An entry in <see cref="CouchGamesMock.Experiences"/>. Nullable values
     /// are written explicitly because JsonUtility does not support nullable integers.
+    /// <see cref="State"/> is the local player's. The row's <c>players</c> map
+    /// lists every mock lobby member: the local player at <see cref="State"/>,
+    /// the others at their <see cref="PlayerStates"/> entry, or "none".
     /// </summary>
     public sealed class CouchGamesMockExperience
     {
@@ -123,15 +135,31 @@ namespace Animo.CouchGames
         public bool Live { get; set; }
         public string State { get; set; } = "none";
 
-        internal string ToJson()
+        /// <summary>Other mock lobby members' states, by userId.</summary>
+        public IDictionary<string, string> PlayerStates { get; } = new Dictionary<string, string>();
+
+        internal string ToJson(IEnumerable<CouchLobbyPlayer> members, string localUserId)
         {
+            var players = (members ?? Enumerable.Empty<CouchLobbyPlayer>())
+                .Select(member => member?.UserId)
+                .Where(userId => !string.IsNullOrEmpty(userId))
+                .Select(userId => CouchGamesSdk.JsonString(userId) + ":" +
+                                  CouchGamesSdk.JsonString(StateOf(userId, localUserId)));
             return "{\"id\":" + CouchGamesSdk.JsonString(Id) +
                    ",\"experienceIndex\":" + IndexJson +
                    ",\"number\":" + NumberJson +
                    ",\"title\":" + CouchGamesSdk.JsonString(Title) +
                    ",\"activatedAt\":" + CouchGamesSdk.JsonString(ActivatedAt) +
                    ",\"live\":" + (Live ? "true" : "false") +
-                   ",\"state\":" + CouchGamesSdk.JsonString(State) + "}";
+                   ",\"state\":" + CouchGamesSdk.JsonString(State) +
+                   ",\"players\":{" + string.Join(",", players) + "}}";
+        }
+
+        private string StateOf(string userId, string localUserId)
+        {
+            if (userId == localUserId)
+                return State;
+            return PlayerStates.TryGetValue(userId, out var state) && state != null ? state : "none";
         }
 
         internal string IndexJson => ExperienceIndex?.ToString(CultureInfo.InvariantCulture) ?? "null";

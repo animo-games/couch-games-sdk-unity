@@ -9,6 +9,10 @@
   including solo games.
 - Added `CouchGamesMock.Experiences`, a configurable mock archive whose
   synchronous switch raises the reserved event before answering success.
+- Added `CouchGamesResponse.Streak`, the player's streak answered by
+  `listExperiences` and `gameplayComplete`. Documented the archive rows'
+  `players` map and experience data's `number`; the mock fakes all three
+  (`CouchGamesMock.Streak`, `CouchGamesMockExperience.PlayerStates`).
 - Documented the archive payload, co-op switching, the refusals, event
   handling and the rule to wait for the event or a failure before making
   further SDK calls.

@@ -281,12 +281,34 @@ experience folder and the files it serves.
 - session statistics
 - lobby roster, identity, current game, and tunneled events
 
+### Gameplay completion and the streak
+
+`await CouchGamesSdk.GameplayCompleteAsync()` records a completion for the
+current experience. The response's `Streak` is the player's current streak in
+this game (challenges completed in a row, each before the next went live),
+with this completion already counted, so a live challenge just finished shows
+the new count; a completion from the archive doesn't add to it. Guests get
+`0`, and so does a refused completion (`Success == false`). `0` can also mean
+the platform couldn't read the streak just then, so don't treat it as proof
+the streak broke. A second seat on the host's own account records nothing and
+answers the account's current streak. `Streak` is null when the platform
+didn't send one (an older build): treat that as unknown.
+
+### Experience data
+
+`await CouchGamesSdk.GetExperienceDataAsync()` returns the current
+experience's details as JSON in `PayloadJson`. `number` is the player-facing
+"No. N", the same number the archive list and the switch event carry, or null
+when the experience is unnumbered. `experienceIndex` is the stored index (0
+when unnumbered): show `number` to players, and read it with a JSON parser that
+preserves nullable numbers.
+
 ### List and open experiences
 
 `await CouchGamesSdk.ListExperiencesAsync()` returns a `CouchGamesResponse`.
 On `Success`, `PayloadJson` is a JSON array of this game's openable challenges
 (released live or archived experiences, excluding the campaign), oldest first,
-each with this player's own `state`.
+each with this player's own `state` and, in `players`, every lobby member's.
 It works before a session starts. Call it when the archive screen opens, not
 every frame: each call is a server round trip. The list is empty while the
 campaign-first lock holds; anonymous players have `state: "none"` everywhere.
@@ -300,10 +322,22 @@ campaign-first lock holds; anonymous players have `state: "none"` everywhere.
 | `activatedAt` | ISO instant, or null; use its UTC date for a daily |
 | `live` | Boolean: whether the challenge is live |
 | `state` | This player's `"none"`, `"started"`, or `"completed"` state |
+| `players` | Object mapping each lobby member's `userId` (the ids in `Lobby.Players`), this player included, to that member's state |
 
-Use a JSON parser that preserves nullable numbers for this array.
+Solo, `players` holds only this player. A guest (anonymous) member reads
+`"none"`, and a second seat on the host's own account reads the host's state.
+If the lobby isn't on your game, or can't be confirmed at that moment,
+`players` holds only this player. Use it for "which ones neither of us has
+done".
+
+The response's `Streak` is the player's current streak in this game, `0` for a
+guest, set on every successful answer (the empty list included) and null when
+the platform didn't send one (an older build). `Streak == 0` can also mean the
+streak couldn't be read just then.
+
+Use a JSON parser that preserves nullable numbers and objects for this array.
 `CouchGamesResponse.GetPayload<T>()` uses Unity's `JsonUtility`, which does not
-read top-level arrays or nullable integers. There is no typed experience-data
+read top-level arrays, nullable integers or dictionaries. There is no typed experience-data
 or archive wrapper in this package.
 
 `await CouchGamesSdk.OpenExperienceAsync(experienceId)` moves to an id from
@@ -400,9 +434,18 @@ CouchGamesMock.Experiences.Add(new CouchGamesMockExperience
     Title = "First daily",
     ActivatedAt = "2026-01-02T00:00:00.000Z",
     Live = false,
-    State = "none"
+    State = "none",
+    PlayerStates = { ["mock-guest-1"] = "completed" }
 });
+CouchGamesMock.Streak = 3;
 ```
+
+`State` is the local player's. Each row's `players` lists every mock lobby
+member (add guests in the Mock Lobby window): the local player at `State`, the
+others at their `PlayerStates` entry by `userId`, or `"none"`.
+`CouchGamesMock.Streak` is the `Streak` the mock answers on the list and on
+`GameplayCompleteAsync()`; the mock doesn't count completions. Mock experience
+data carries the current entry's `number`.
 
 Opening a listed id updates the mock's experience data and date and raises the
 reserved event through the usual mock lobby-event path, with

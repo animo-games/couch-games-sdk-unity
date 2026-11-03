@@ -128,7 +128,8 @@ namespace Animo.CouchGames
                 bridge.rawJson,
                 bridge.persisted,
                 bridge.conflict,
-                bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null);
+                bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null,
+                bridge.hasStreak ? bridge.streak : (int?)null);
         }
 
         internal Task<BridgeResponse> InvokeBridgeAsync(string method, string argumentsJson)
@@ -633,21 +634,26 @@ namespace Animo.CouchGames
                     FoldGameplayTime();
                     _mockStore.gameplayCompleted = true;
                     PersistMock();
-                    return CouchGamesResponse.Ok();
+                    return new CouchGamesResponse(true, "", "{}", "{}", streak: CouchGamesMock.Streak);
                 case "getExperienceData":
                     if (_mockExperience != null)
                     {
                         return CouchGamesResponse.Ok(
                             "{\"experienceId\":" + CouchGamesSdk.JsonString(_mockExperienceId) +
-                            ",\"experienceIndex\":" + _mockExperience.IndexJson +
+                            ",\"experienceIndex\":" +
+                            (_mockExperience.ExperienceIndex ?? 0).ToString(CultureInfo.InvariantCulture) +
+                            ",\"number\":" + _mockExperience.NumberJson +
                             ",\"experienceName\":" + CouchGamesSdk.JsonString(_mockExperience.Title) +
                             ",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
                     }
                     return CouchGamesResponse.Ok(
-                        "{\"experienceName\":\"Mock Experience\",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
+                        "{\"number\":null,\"experienceName\":\"Mock Experience\",\"experienceUrl\":\"https://couch.games/mock\",\"files\":[]}");
                 case "listExperiences":
-                    return CouchGamesResponse.Ok(CouchGamesSdk.JsonArray(
-                        CouchGamesMock.Experiences.Where(item => item != null).Select(item => item.ToJson()).ToArray()));
+                    var listJson = CouchGamesSdk.JsonArray(CouchGamesMock.Experiences
+                        .Where(item => item != null)
+                        .Select(item => item.ToJson(_mockPlayers, CouchGamesSdk.LocalPlayer?.UserId))
+                        .ToArray());
+                    return new CouchGamesResponse(true, "", listJson, listJson, streak: CouchGamesMock.Streak);
                 case "openExperience":
                     var arguments = JsonUtility.FromJson<MockStringArguments>("{\"values\":" + argumentsJson + "}");
                     return OpenMockExperience(arguments?.values?.FirstOrDefault());
