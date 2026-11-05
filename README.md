@@ -38,7 +38,9 @@ public sealed class GameStartup : MonoBehaviour
 
 Initializing twice is harmless. In the Editor and standalone development builds
 the SDK uses a persistent local mock; in a WebGL player it uses the platform
-when `window.CouchGames` exists.
+when `window.CouchGames` exists. `CouchGamesSdk.IsInitialized` says whether
+`InitializeAsync()` has finished, and `CouchGamesSdk.IsMock` whether the mock is
+answering.
 
 ## Saves
 
@@ -62,6 +64,8 @@ if (!write.Persisted)
 ```
 
 `progress` is a whole percent, 0 to 100 (the platform rounds it), so `25f` is a quarter of the way.
+`SaveGameJsonAsync(json, progress)` takes a save you've already serialized,
+with the same options.
 
 Two rules: **`LoadSaveResultAsync()` decides whether a player is new**, and
 **a save is judged by `Persisted`, not `Success`**. The guide explains why:
@@ -136,6 +140,9 @@ CouchGamesSdk.Lobby.SendEvent(
 ```
 
 An optional `CouchLobbyTarget` narrows an event by `UserId`, `Role` or both.
+`PlayerJoined` and `PlayerLeft` fire before `PlayersChanged`;
+`GetPlayer(userId)`, `GetHost()` and `GetGuests()` read the roster, and
+`CouchGamesSdk.LocalPlayer` is this player.
 Delivery rules are in the [lobby guide](https://developer.couchgames.com/docs/multiplayer#talk-through-the-lobby), and what to do after a dropped connection in
 [Recover from dropped connections](https://developer.couchgames.com/docs/multiplayer#recover-from-dropped-connections).
 
@@ -213,7 +220,9 @@ Mock data persists under `Application.persistentDataPath`. The **Saves**
 section shows the stored revision and the `CouchGamesMock` switches above
 (unavailable load, joining as a guest, refusing the next save, clearing all
 mock data). The **Experience Files** section shows the mock folder and its
-files.
+files. From code, `CouchGamesSdk.Lobby.AddMockGuest(name)`,
+`RemoveMockPlayer(userId)` and `SimulateMockEvent(name, dataJson, senderUserId)`
+do what the window's buttons do.
 
 ## Supported platform API
 
