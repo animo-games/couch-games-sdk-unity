@@ -134,7 +134,7 @@ CouchGamesSdk.Lobby.SendEvent(
 ```
 
 An optional `CouchLobbyTarget` narrows an event by `UserId`, `Role` or both.
-Delivery rules are in the guide's [lobby guide](https://developer.couchgames.com/docs#talk-through-the-lobby), and what to do after a dropped connection in
+Delivery rules are in the [lobby guide](https://developer.couchgames.com/docs#talk-through-the-lobby), and what to do after a dropped connection in
 [Recover from dropped connections](https://developer.couchgames.com/docs#recover-from-dropped-connections).
 
 ## Experience files
