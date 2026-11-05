@@ -56,16 +56,18 @@ else
     savingEnabled = false;
 }
 
-var write = await CouchGamesSdk.SaveGameAsync(state, 0.25f);
+var write = await CouchGamesSdk.SaveGameAsync(state, 25f);
 if (!write.Persisted)
     Debug.LogWarning($"Save did not land: {write.Error}");
 ```
 
+`progress` is a whole percent, 0 to 100 (the platform rounds it), so `25f` is a quarter of the way.
+
 Two rules: **`LoadSaveResultAsync()` decides whether a player is new**, and
 **a save is judged by `Persisted`, not `Success`**. The guide explains why:
-[`loadSaveResult()`](https://developer.couchgames.com/docs#load-save-result),
-[`loadLatestSave()`](https://developer.couchgames.com/docs#load-latest-save)
-and [refused saves](https://developer.couchgames.com/docs#refused-saves).
+[`loadSaveResult()`](https://developer.couchgames.com/docs/saves#load-save-result),
+[`loadLatestSave()`](https://developer.couchgames.com/docs/saves#load-latest-save)
+and [refused saves](https://developer.couchgames.com/docs/saving-progress#refused-saves).
 
 | `LoadSaveResultAsync()` | Meaning | Safe to start fresh? |
 | --- | --- | --- |
@@ -88,7 +90,7 @@ Branch on `Persisted`; the SDK treats a missing `Persisted` as "did not land".
 If your retries are capped, ask for an honest failure:
 
 ```csharp
-var res = await CouchGamesSdk.SaveGameAsync(state, 0.25f, onConflict: CouchGamesSaveConflictMode.Error);
+var res = await CouchGamesSdk.SaveGameAsync(state, 25f, onConflict: CouchGamesSaveConflictMode.Error);
 // a refusal now arrives as Success = false, Persisted = false, Conflict = true
 ```
 
@@ -134,13 +136,13 @@ CouchGamesSdk.Lobby.SendEvent(
 ```
 
 An optional `CouchLobbyTarget` narrows an event by `UserId`, `Role` or both.
-Delivery rules are in the [lobby guide](https://developer.couchgames.com/docs#talk-through-the-lobby), and what to do after a dropped connection in
-[Recover from dropped connections](https://developer.couchgames.com/docs#recover-from-dropped-connections).
+Delivery rules are in the [lobby guide](https://developer.couchgames.com/docs/multiplayer#talk-through-the-lobby), and what to do after a dropped connection in
+[Recover from dropped connections](https://developer.couchgames.com/docs/multiplayer#recover-from-dropped-connections).
 
 ## Experience files
 
 `CouchGamesSdk.Experience` reads the current experience's files by basename
-([guide](https://developer.couchgames.com/docs#experience-files)).
+([guide](https://developer.couchgames.com/docs/level-files#experience-files)).
 
 ```csharp
 [Serializable]
@@ -223,14 +225,14 @@ events), and `ListExperiencesAsync()` / `OpenExperienceAsync(experienceId)`.
 
 `await CouchGamesSdk.GameplayCompleteAsync()` records the completion. The
 response's `Streak` is the player's streak in your game
-([guide](https://developer.couchgames.com/docs#gameplay-complete)); it's `null`
+([guide](https://developer.couchgames.com/docs/gameplay#gameplay-complete)); it's `null`
 when the platform didn't send one, so treat that as unknown.
 
 ### Experience data
 
 `await CouchGamesSdk.GetExperienceDataAsync()` returns the current experience
 as JSON in `PayloadJson`
-([fields](https://developer.couchgames.com/docs#get-experience-data)). Read it
+([fields](https://developer.couchgames.com/docs/experiences#get-experience-data)). Read it
 with a JSON parser that keeps nullable numbers: `number` is null for an
 unnumbered experience.
 
@@ -238,7 +240,7 @@ unnumbered experience.
 
 `await CouchGamesSdk.ListExperiencesAsync()` returns the archive as a JSON
 array in `PayloadJson`, and the player's streak in `Streak`
-([fields](https://developer.couchgames.com/docs#list-experiences)). Parse it
+([fields](https://developer.couchgames.com/docs/experiences#list-experiences)). Parse it
 with a JSON parser that reads top-level arrays, nullable numbers and
 dictionaries: `CouchGamesResponse.GetPayload<T>()` uses `JsonUtility`, which
 reads none of them, and this package has no typed wrapper.
@@ -246,7 +248,7 @@ reads none of them, and this package has no typed wrapper.
 `await CouchGamesSdk.OpenExperienceAsync(experienceId)` switches to an id from
 that list without reloading. On success the experience-changed event has
 already been delivered. On `Success == false`, `Error` carries the platform's
-message ([the list](https://developer.couchgames.com/docs#open-experience)) and
+message ([the list](https://developer.couchgames.com/docs/experiences#open-experience)) and
 `RawJson` the full response. Until the event arrives or the call fails, make no
 other SDK calls.
 
@@ -273,7 +275,7 @@ if (!result.Success)
     Debug.LogWarning(result.Error);
 ```
 
-`DataJson` holds the [event's fields](https://developer.couchgames.com/docs#reserved-event-couchgamesexperience-changed).
+`DataJson` holds the [event's fields](https://developer.couchgames.com/docs/experiences#reserved-event-couchgamesexperience-changed).
 `Lobby.CurrentGame` is null solo, so read the new experience from the event or
 `GetExperienceDataAsync()`. `CouchGamesSdk.ExperienceDataJson` also refreshes
 on the event, but on the platform only after its request answers, so don't read
