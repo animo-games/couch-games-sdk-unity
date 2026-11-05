@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added the platform calls the package didn't reach: `FlushSavesAsync()`,
+  `CompleteCampaignAsync()`, `DeleteGameMetadataAsync()`,
+  `ClearGameMetadataAsync()`, `Track()` and `FlushTelemetryAsync()`; play
+  modes (`PlayMode`, `ShareCode`, `IsJoining`, `PlayModeSelected`); WebRTC
+  signaling (`CouchGamesSdk.WebRtc`); and shared game assets
+  (`GetSharedRootAsync()`, `GetSharedFileUrlAsync()`, `GetSharedFileInfoAsync()`).
+- Added `CouchGamesResponse.AlreadyCompleted`, `AlreadyUnlocked` and `Flushed`.
+- The WebGL bridge resolves dotted calls (`webrtc.connectSignaling`) and
+  forwards play-mode and signaling events.
+- The mock answers the new calls: `CouchGamesMock.SelectPlayMode`,
+  `CouchGamesMock.TrackedEvents`; it has no shared assets and doesn't simulate
+  signaling.
+- README: platform behavior now links the developer guide; progress is a
+  whole percent (the examples passed `0.25f`, which rounds to 0%).
+
 - Added `CouchGamesSdk.ListExperiencesAsync()` and `OpenExperienceAsync(id)`
   through the existing generic WebGL bridge.
 - Added `CouchGamesLobby.ExperienceChangedEventName` for the reserved

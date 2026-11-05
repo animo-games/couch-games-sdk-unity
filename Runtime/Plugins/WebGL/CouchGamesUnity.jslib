@@ -44,6 +44,10 @@ mergeInto(LibraryManager.library, {
             // payload; older platform builds omit it.
             var hasStreak = isPlatformResponse && typeof result.streak === 'number' &&
                 isFinite(result.streak);
+            // completeCampaign, unlockAchievement and flushSaves answer these
+            // beside the payload.
+            var flushed = isPlatformResponse && typeof result.flushed === 'number' &&
+                isFinite(result.flushed) ? Math.trunc(result.flushed) : 0;
             SendMessage(objectName, callback, JSON.stringify({
                 requestId: requestId,
                 success: platformSuccess,
@@ -61,18 +65,27 @@ mergeInto(LibraryManager.library, {
                 revision: hasRevision ? Math.trunc(result.revision) : 0,
                 hostAuthoritative: isPlatformResponse && result.hostAuthoritative === true,
                 hasStreak: hasStreak,
-                streak: hasStreak ? Math.trunc(result.streak) : 0
+                streak: hasStreak ? Math.trunc(result.streak) : 0,
+                alreadyCompleted: isPlatformResponse && result.alreadyCompleted === true,
+                alreadyUnlocked: isPlatformResponse && result.alreadyUnlocked === true,
+                flushed: flushed
             }));
         }
 
         try {
-            var sdk = window.CouchGames;
-            if (!sdk || typeof sdk[method] !== 'function') {
+            // A dotted name reaches a namespace's call: "webrtc.connectSignaling",
+            // "game.getSharedFileURL". The call runs with its namespace as `this`.
+            var owner = window.CouchGames;
+            var parts = method.split('.');
+            for (var i = 0; owner && i < parts.length - 1; i++)
+                owner = owner[parts[i]];
+            var name = parts[parts.length - 1];
+            if (!owner || typeof owner[name] !== 'function') {
                 send(false, null, 'CouchGames.' + method + ' is unavailable');
                 return;
             }
             var args = JSON.parse(argsJson || '[]');
-            Promise.resolve(sdk[method].apply(sdk, args))
+            Promise.resolve(owner[name].apply(owner, args))
                 .then(function (result) { send(true, result, ''); })
                 .catch(function (error) {
                     send(false, null, error && error.message ? error.message : String(error));
@@ -129,6 +142,68 @@ mergeInto(LibraryManager.library, {
         } catch (error) {
             console.warn('[CouchGames Unity] Failed to read initial lobby state', error);
         }
+        return 1;
+    },
+
+    // Play modes: onPlayModeSelected fires on registration when a mode is
+    // already chosen, and again on every change.
+    CGU_InitializePlayMode: function (objectPtr, callbackPtr) {
+        var objectName = UTF8ToString(objectPtr);
+        var callback = UTF8ToString(callbackPtr);
+        var sdk = typeof window !== 'undefined' ? window.CouchGames : null;
+        if (!sdk || typeof sdk.onPlayModeSelected !== 'function')
+            return 0;
+        sdk.onPlayModeSelected(function (mode, code) {
+            SendMessage(objectName, callback, JSON.stringify({
+                mode: mode == null ? '' : String(mode),
+                code: code == null ? '' : String(code)
+            }));
+        });
+        return 1;
+    },
+
+    CGU_GetPlayState: function () {
+        var sdk = window.CouchGames;
+        var state = {
+            mode: sdk && typeof sdk.getPlayMode === 'function' ? (sdk.getPlayMode() || '') : '',
+            code: sdk && typeof sdk.getShareCode === 'function' ? (sdk.getShareCode() || '') : '',
+            joining: !!(sdk && typeof sdk.isJoining === 'function' && sdk.isJoining())
+        };
+        var json = JSON.stringify(state);
+        var size = lengthBytesUTF8(json) + 1;
+        var buffer = _malloc(size);
+        stringToUTF8(json, buffer, size);
+        return buffer;
+    },
+
+    // Signaling events, all through one callback as { type, peerId, roomId,
+    // dataJson, peerIds, iceServersJson }.
+    CGU_InitializeWebRtc: function (objectPtr, callbackPtr) {
+        var objectName = UTF8ToString(objectPtr);
+        var callback = UTF8ToString(callbackPtr);
+        var webrtc = window.CouchGames && window.CouchGames.webrtc;
+        if (!webrtc || typeof webrtc.onSignal !== 'function')
+            return 0;
+        function post(message) {
+            SendMessage(objectName, callback, JSON.stringify({
+                type: message.type,
+                peerId: message.peerId == null ? '' : String(message.peerId),
+                roomId: message.roomId == null ? '' : String(message.roomId),
+                dataJson: JSON.stringify(typeof message.data === 'undefined' ? null : message.data),
+                peerIds: Array.isArray(message.peerIds) ? message.peerIds.map(String) : [],
+                iceServersJson: JSON.stringify(Array.isArray(message.iceServers) ? message.iceServers : [])
+            }));
+        }
+        webrtc.onSignal(function (peerId, data) { post({ type: 'signal', peerId: peerId, data: data }); });
+        webrtc.onPeerJoined(function (peerId) { post({ type: 'peer-joined', peerId: peerId }); });
+        webrtc.onPeerLeft(function (peerId) { post({ type: 'peer-left', peerId: peerId }); });
+        webrtc.onPeerExists(function (peerId) { post({ type: 'peer-exists', peerId: peerId }); });
+        if (typeof webrtc.onSignalingClosed === 'function')
+            webrtc.onSignalingClosed(function (roomId) { post({ type: 'closed', roomId: roomId }); });
+        if (typeof webrtc.onPeers === 'function')
+            webrtc.onPeers(function (peerIds) { post({ type: 'peers', peerIds: peerIds }); });
+        if (typeof webrtc.onIceServers === 'function')
+            webrtc.onIceServers(function (iceServers) { post({ type: 'ice-servers', iceServers: iceServers }); });
         return 1;
     },
 

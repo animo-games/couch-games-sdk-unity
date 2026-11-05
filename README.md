@@ -1,10 +1,12 @@
 # Couch Games SDK for Unity
 
-Unity Package Manager integration for games hosted by Couch Games.
+Unity Package Manager integration for games hosted by Couch Games. In a WebGL
+build it calls the platform's `window.CouchGames`, and it never opens a lobby
+connection of its own.
 
-The WebGL runtime talks to the platform-injected `window.CouchGames` object.
-The platform owns the lobby WebSocket; this package never opens a competing
-connection in a WebGL build.
+**What each call does, and the rules around it, are in the
+[developer guide](https://developer.couchgames.com/docs).** This README covers
+the Unity names, the Unity-specific behavior, and the local mock.
 
 ## Install
 
@@ -15,8 +17,8 @@ folder:
 git submodule add https://github.com/animo-games/couch-games-sdk-unity.git Packages/com.animo.couch-games
 ```
 
-Unity discovers the package from its `package.json`; no manifest entry is
-required when the package lives directly under `Packages`.
+Unity finds the package from its `package.json`; no manifest entry is needed
+when it lives directly under `Packages`.
 
 ## Initialize
 
@@ -34,9 +36,11 @@ public sealed class GameStartup : MonoBehaviour
 }
 ```
 
-Initialization is idempotent. In the Editor and standalone development builds,
-the SDK uses a persistent local mock. In a WebGL player it uses the real
-platform when `window.CouchGames` exists.
+Initializing twice is harmless. In the Editor and standalone development builds
+the SDK uses a persistent local mock; in a WebGL player it uses the platform
+when `window.CouchGames` exists. `CouchGamesSdk.IsInitialized` says whether
+`InitializeAsync()` has finished, and `CouchGamesSdk.IsMock` whether the mock is
+answering.
 
 ## Saves
 
@@ -50,92 +54,51 @@ else if (res.IsFound)
     state = FromSave(res.GetPayload<GameState>());
 else
 {
-    state = NewGame();                 // show them something, but do NOT save it
+    state = NewGame();                 // show them something, but don't save it
     savingEnabled = false;
 }
 
-var write = await CouchGamesSdk.SaveGameAsync(state, 0.25f);
+var write = await CouchGamesSdk.SaveGameAsync(state, 25f);
 if (!write.Persisted)
     Debug.LogWarning($"Save did not land: {write.Error}");
 ```
 
-Two rules carry all of this: **`LoadSaveResultAsync()` decides whether a
-player is new**, and **`SaveGameAsync()` is judged by `Persisted`, not
-`Success`**.
+`progress` is a whole percent, 0 to 100 (the platform rounds it), so `25f` is a quarter of the way.
+`SaveGameJsonAsync(json, progress)` takes a save you've already serialized,
+with the same options.
 
-### Why `LoadLatestSaveAsync`/`LoadLatestSaveSync` cannot tell you
+Two rules: **`LoadSaveResultAsync()` decides whether a player is new**, and
+**a save is judged by `Persisted`, not `Success`**. The guide explains why:
+[`loadSaveResult()`](https://developer.couchgames.com/docs/saves#load-save-result),
+[`loadLatestSave()`](https://developer.couchgames.com/docs/saves#load-latest-save)
+and [refused saves](https://developer.couchgames.com/docs/saving-progress#refused-saves).
 
-`LoadLatestSaveAsync()` and `LoadLatestSaveSync()` read the save the platform
-handed your session at startup. `LoadLatestSaveSync` costs no round-trip, but
-its empty payload is ambiguous -- it means any of:
-
-- this player genuinely has no save;
-- the session had not finished starting when you asked;
-- they joined **someone else's** session, so their own save was withheld on
-  purpose (a co-op guest must see the host's board, not their solo game).
-
-Only the first makes it safe to start fresh. Code that reads the other two as
-"new player" initializes empty state, and its next whole-document save
-destroys real progress -- which is exactly the bug this API exists to
-prevent. Use `LoadLatestSaveAsync`/`LoadLatestSaveSync` only to re-read state
-you have already established.
-
-`LoadSaveResultAsync()` awaits the real answer and says which case you are in:
-
-| | Meaning | Safe to start fresh? |
+| `LoadSaveResultAsync()` | Meaning | Safe to start fresh? |
 | --- | --- | --- |
-| `IsNewPlayer` | Confirmed: no save exists | **Yes** -- the only status that is |
-| `IsFound` | `PayloadJson` holds the stored save | No -- merge into `PayloadJson` |
-| `IsUnavailable` | Could not be read; one may well exist | No -- and keep writes off |
+| `IsNewPlayer` (also `IsSafeToStartFresh`) | No save exists | **Yes**, the only one |
+| `IsFound` | `PayloadJson` holds the save | No: merge into it |
+| `IsUnavailable` | It couldn't be read; one may exist | No, and keep saving off |
 
-`IsSafeToStartFresh` is `IsNewPlayer` under a name that says what the answer
-is for. On `Unavailable`, put the player somewhere sensible and leave saving
-**disabled** for the session rather than guessing.
+It also returns `Revision`, `MetadataJson` and `HostAuthoritative` (true for a
+player who joined someone else's session: merge into `PayloadJson` rather than
+showing it).
 
-It also returns `Revision` (what you read, see below), `MetadataJson`, and
-`HostAuthoritative`.
-
-### Guests: `HostAuthoritative`
-
-When `HostAuthoritative` is true you are a player who joined someone else's
-session. `PayloadJson` is **your own** save, but the host owns the shared
-board. Use it as a **merge base** -- read it, merge this session's
-contributions into it, write that back. Rendering it as live state would show
-a guest their solo game in place of the host's.
+`LoadLatestSaveAsync()` and `LoadLatestSaveSync()` read the save handed to the
+session at startup. Use them only to re-read state you already have: an empty
+payload doesn't mean the player is new.
 
 ### `Persisted`, not `Success`
 
-The platform refuses a write that would replace a save this session has never
-read, and by default it reports that refusal as:
+A refused save arrives as `Success = true, Persisted = false, Conflict = true`.
+Branch on `Persisted`; the SDK treats a missing `Persisted` as "did not land".
+If your retries are capped, ask for an honest failure:
 
 ```csharp
-new CouchGamesResponse(success: true, persisted: false, conflict: true, ...)
-```
-
-`Success = true` on a write that did not happen looks wrong, and it is
-deliberate: this SDK is compiled into your exported build, so games already
-published cannot be updated from the platform, and many of them branch on
-`Success` alone with an unbounded retry loop. An honest failure would spin
-them for a whole session.
-
-So **branch on `response.Persisted`**. It is accurate whichever mode you ask
-for. `Conflict` tells you the write was refused rather than broken, and a
-response that omits `Persisted` means the platform took the call as a no-op
--- treat a missing value as "did not land", which is what this SDK does.
-
-If your retry loop is **bounded**, you can ask for an honest failure instead:
-
-```csharp
-var res = await CouchGamesSdk.SaveGameAsync(state, 0.25f, onConflict: CouchGamesSaveConflictMode.Error);
+var res = await CouchGamesSdk.SaveGameAsync(state, 25f, onConflict: CouchGamesSaveConflictMode.Error);
 // a refusal now arrives as Success = false, Persisted = false, Conflict = true
 ```
 
-The SDK never sets this for you -- only your game knows whether its retry is
-capped.
-
-### Recovering from a refusal
-
-Always the same, and it needs nothing from `CurrentRevision`:
+The SDK never sets this for you. To recover from a refusal:
 
 ```csharp
 if (write.Conflict)
@@ -146,16 +109,12 @@ if (write.Conflict)
 }
 ```
 
-Passing `res.Revision` as `expectedRevision` asserts which state you are
-replacing, and is the reliable way to overwrite deliberately.
-`CurrentRevision` on the response is the revision your write produced (or, on
-a refusal the server made, the one stored) -- it is absent when the refusal
-happened client-side, so never require it.
+Don't require `CurrentRevision`: it's absent when the refusal happened in the
+browser.
 
 ### Trying it without the platform
 
-The mock backend simulates the same guard, so every path above is reachable
-in the editor:
+The mock refuses saves the same way:
 
 ```csharp
 CouchGamesMock.SimulateUnreadSave();               // next blind save is refused
@@ -163,8 +122,8 @@ CouchGamesMock.SimulateLoadUnavailable = true;     // LoadSaveResultAsync report
 CouchGamesMock.SimulateHostAuthoritative = true;   // pretend this player joined
 ```
 
-`SimulateUnreadSave()` clears the way the real one does -- call
-`LoadSaveResultAsync()`, and the next write is admitted again.
+After `SimulateUnreadSave()`, calling `LoadSaveResultAsync()` lets the next
+save through again, as on the platform.
 
 ## Lobby
 
@@ -180,16 +139,17 @@ CouchGamesSdk.Lobby.SendEvent(
     JsonUtility.ToJson(new MoveCommand { direction = "north" }));
 ```
 
-Broadcast events reach every other client. The sender does not receive its own
-event back. An optional `CouchLobbyTarget` can filter by `UserId`, `Role`, or
-both; both conditions must match.
+An optional `CouchLobbyTarget` narrows an event by `UserId`, `Role` or both.
+`PlayerJoined` and `PlayerLeft` fire before `PlayersChanged`;
+`GetPlayer(userId)`, `GetHost()` and `GetGuests()` read the roster, and
+`CouchGamesSdk.LocalPlayer` is this player.
+Delivery rules are in the [lobby guide](https://developer.couchgames.com/docs/multiplayer#talk-through-the-lobby), and what to do after a dropped connection in
+[Recover from dropped connections](https://developer.couchgames.com/docs/multiplayer#recover-from-dropped-connections).
 
 ## Experience files
 
-An experience is a dated content drop for your game -- a level pack, a room,
-a puzzle set -- uploaded on the platform. `CouchGamesSdk.Experience` reads its
-files **by basename**, never by URL: the URL embeds an experience id that
-rotates, so code that keys off it breaks the next day.
+`CouchGamesSdk.Experience` reads the current experience's files by basename
+([guide](https://developer.couchgames.com/docs/level-files#experience-files)).
 
 ```csharp
 [Serializable]
@@ -215,29 +175,23 @@ foreach (var fileName in await CouchGamesSdk.Experience.ListFilesAsync())
 | `ListFilesAsync()` | Every basename on the current experience, in upload order |
 | `HasFile(name)` | Whether that basename is on the current experience |
 | `GetFileAsync(name)` | The file's bytes, or `null` on failure |
-| `GetFileTextAsync(name)` | The file decoded as UTF-8 (byte-order mark removed), or `null` on failure |
+| `GetFileTextAsync(name)` | The file as UTF-8 (byte-order mark removed), or `null` on failure |
 | `GetFileJsonAsync<T>(name)` | The file parsed with `JsonUtility`, or `default` on failure |
 
-Delivery is race-free: the platform keeps the bytes, so `GetFileAsync`
-resolves whether the download finished before or after you asked. There is no
-event to wait for.
+Failures (an unknown name, a failed download, a switch mid-flight, or JSON that
+doesn't parse) return `null`/`default` and log the reason with
+`Debug.LogError`. A zero-byte file returns an empty array, not `null`.
 
-Failures -- an unknown name, a failed download, an experience that rotated
-mid-flight, or JSON that does not parse -- return `null`/`default` and log the
-reason with `Debug.LogError`. A zero-byte file returns an empty array, not
-`null`. On a platform build that predates experience files, `ListFilesAsync()`
-returns an empty list.
-
-`GetFileJsonAsync<T>` uses `JsonUtility`, which only reads an **object** at the
-top level. For a file whose root is an array, wrap it in an object or read it
-with `GetFileTextAsync` and a parser of your choice.
+`JsonUtility` reads only an **object** at the top level. For a file whose root
+is an array, wrap it in an object, or read it with `GetFileTextAsync` and a
+parser of your choice.
 
 ### Trying it without the platform
 
-In the Editor and standalone builds, the mock serves a local folder as the
-experience. By default it is a `CouchGamesExperience` folder at the Unity
-project root (outside `Assets`, so the files are not imported or shipped). In a
-standalone build the default sits next to the executable's data folder.
+In the Editor and standalone builds the mock serves a local folder as the
+experience: by default `CouchGamesExperience` at the project root (outside
+`Assets`, so it isn't imported or shipped), or next to the data folder in a
+standalone build.
 
 ```
 MyGame/
@@ -247,150 +201,111 @@ MyGame/
     level-02.json
 ```
 
-Point it elsewhere before reading files, for example at your level build
-output. A relative path resolves against the project root:
+Point it elsewhere before reading files; a relative path resolves against the
+project root:
 
 ```csharp
 CouchGamesMock.ExperienceFilesDirectory = "Build/Levels";
 CouchGamesMock.ExperienceFilesDirectory = null;   // back to the default
 ```
 
-Every file directly inside the folder is served by basename. Subfolders,
-dotfiles, and Unity `.meta` files are ignored. The folder is read on every
-call, so files you add while playing show up immediately.
+Every file directly in the folder is served by basename. Subfolders, dotfiles
+and `.meta` files are ignored. The folder is read on every call, so files you
+add while playing show up at once.
 
 ## Local testing
 
-Open **Window > Couch Games > Mock Lobby** to add fake guests and inject lobby
-events. Classic calls persist beneath Unity's `Application.persistentDataPath`.
-The **Saves** section shows the stored save's revision and exposes the
-`CouchGamesMock` knobs above (simulate an unavailable load, simulate joining
-as a guest, force the next save to be refused, or clear all mock data) as
-toggles and buttons. The **Experience Files** section shows the mock
-experience folder and the files it serves.
+**Window > Couch Games > Mock Lobby** adds fake guests and sends lobby events.
+Mock data persists under `Application.persistentDataPath`. The **Saves**
+section shows the stored revision and the `CouchGamesMock` switches above
+(unavailable load, joining as a guest, refusing the next save, clearing all
+mock data). The **Experience Files** section shows the mock folder and its
+files. From code, `CouchGamesSdk.Lobby.AddMockGuest(name)`,
+`RemoveMockPlayer(userId)` and `SimulateMockEvent(name, dataJson, senderUserId)`
+do what the window's buttons do.
 
 ## Supported platform API
 
-- `ListExperiencesAsync()` and `OpenExperienceAsync(experienceId)` (see below)
-- saves
-- gameplay lifecycle
-- experience data/date
-- experience files
-- game metadata
-- achievements
-- session statistics
-- lobby roster, identity, current game, and tunneled events
+Everything in the [guide](https://developer.couchgames.com/docs): saves
+(including `FlushSavesAsync()`), gameplay and `CompleteCampaignAsync()`,
+experience data and date, experience files, shared game assets, game metadata
+(including `DeleteGameMetadataAsync()` and `ClearGameMetadataAsync()`),
+achievements, session stats, telemetry, play modes, the lobby, WebRTC
+signaling, and `ListExperiencesAsync()` / `OpenExperienceAsync(experienceId)`.
+
+```csharp
+var done = await CouchGamesSdk.CompleteCampaignAsync();   // done.AlreadyCompleted on a repeat
+var sent = await CouchGamesSdk.FlushSavesAsync();         // sent.Persisted, sent.Flushed
+await CouchGamesSdk.DeleteGameMetadataAsync("settings", "volume");
+CouchGamesSdk.Track("level_complete", "{\"level\":3,\"success\":true}");
+await CouchGamesSdk.FlushTelemetryAsync();
+var url = await CouchGamesSdk.GetSharedFileUrlAsync("audio/theme.ogg");
+```
+
+The mock records `CompleteCampaignAsync()` once (it doesn't know which
+experience is the campaign), keeps every `Track()` call in
+`CouchGamesMock.TrackedEvents` instead of sending it, has no shared assets, and
+doesn't simulate signaling.
+
+### Play modes
+
+```csharp
+await CouchGamesSdk.InitializeAsync();
+CouchGamesSdk.PlayModeSelected += OnPlayMode;            // (mode, code)
+OnPlayMode(CouchGamesSdk.PlayMode, CouchGamesSdk.ShareCode); // it can fire before you subscribe
+```
+
+`PlayMode` is `"1-device"`, `"2-devices"` or null; `IsJoining` is true for a
+guest ([guide](https://developer.couchgames.com/docs/multiplayer#play-modes-and-room-codes)).
+In the mock, `CouchGamesMock.SelectPlayMode("2-devices", "ABCD")` raises the
+event, and `CouchGamesMock.IsJoining` makes this client a guest.
+
+### WebRTC signaling
+
+`CouchGamesSdk.WebRtc` finds the other player: `ConnectSignalingAsync(code)`,
+`SendSignal(peerId, json)`, and the `PeerExists`, `PeerJoined`, `PeerLeft` and
+`SignalReceived` events ([guide](https://developer.couchgames.com/docs/multiplayer#connect-players-with-webrtc)).
+Unity's WebGL player has no WebRTC of its own, so the peer connection itself
+is yours: a WebRTC package, or your own JavaScript.
 
 ### Gameplay completion and the streak
 
-`await CouchGamesSdk.GameplayCompleteAsync()` records a completion for the
-current experience. The response's `Streak` is the player's current streak in
-this game (challenges completed in a row, each before the next went live),
-with this completion already counted, so a live challenge just finished shows
-the new count; a completion from the archive doesn't add to it. Guests get
-`0`, and so does a refused completion (`Success == false`). `0` can also mean
-the platform couldn't read the streak just then, so don't treat it as proof
-the streak broke. A second seat on the host's own account records nothing and
-answers the account's current streak. `Streak` is null when the platform
-didn't send one (an older build): treat that as unknown.
+`await CouchGamesSdk.GameplayCompleteAsync()` records the completion. The
+response's `Streak` is the player's streak in your game
+([guide](https://developer.couchgames.com/docs/gameplay#gameplay-complete)); it's `null`
+when the platform didn't send one, so treat that as unknown.
 
 ### Experience data
 
-`await CouchGamesSdk.GetExperienceDataAsync()` returns the current
-experience's details as JSON in `PayloadJson`. `number` is the player-facing
-"No. N", the same number the archive list and the switch event carry, or null
-when the experience is unnumbered. `experienceIndex` is the stored index (0
-when unnumbered): show `number` to players, and read it with a JSON parser that
-preserves nullable numbers.
+`await CouchGamesSdk.GetExperienceDataAsync()` returns the current experience
+as JSON in `PayloadJson`
+([fields](https://developer.couchgames.com/docs/experiences#get-experience-data)). Read it
+with a JSON parser that keeps nullable numbers: `number` is null for an
+unnumbered experience.
 
 ### List and open experiences
 
-`await CouchGamesSdk.ListExperiencesAsync()` returns a `CouchGamesResponse`.
-On `Success`, `PayloadJson` is a JSON array of this game's openable challenges
-(released live or archived experiences, excluding the campaign), oldest first,
-each with this player's own `state` and, in `players`, every lobby member's.
-It works before a session starts. Call it when the archive screen opens, not
-every frame: each call is a server round trip. The list is empty while the
-campaign-first lock holds; anonymous players have `state: "none"` everywhere.
+`await CouchGamesSdk.ListExperiencesAsync()` returns the archive as a JSON
+array in `PayloadJson`, and the player's streak in `Streak`
+([fields](https://developer.couchgames.com/docs/experiences#list-experiences)). Parse it
+with a JSON parser that reads top-level arrays, nullable numbers and
+dictionaries: `CouchGamesResponse.GetPayload<T>()` uses `JsonUtility`, which
+reads none of them, and this package has no typed wrapper.
 
-| Payload field | Meaning |
-| --- | --- |
-| `id` | String id to pass to `OpenExperienceAsync` |
-| `experienceIndex` | Stored index reported by `getExperienceData`, or null |
-| `number` | Player-facing "No. N", or null if unnumbered |
-| `title` | Title string, or null |
-| `activatedAt` | ISO instant, or null; use its UTC date for a daily |
-| `live` | Boolean: whether the challenge is live |
-| `state` | This player's `"none"`, `"started"`, or `"completed"` state |
-| `players` | Object mapping each lobby member's `userId` (the ids in `Lobby.Players`), this player included, to that member's state |
-
-Solo, `players` holds only this player. A guest (anonymous) member reads
-`"none"`, and a second seat on the host's own account reads the host's state.
-If the lobby isn't on your game, or can't be confirmed at that moment,
-`players` holds only this player. Use it for "which ones neither of us has
-done".
-
-The response's `Streak` is the player's current streak in this game, `0` for a
-guest, set on every successful answer (the empty list included) and null when
-the platform didn't send one (an older build). `Streak == 0` can also mean the
-streak couldn't be read just then.
-
-Use a JSON parser that preserves nullable numbers and objects for this array.
-`CouchGamesResponse.GetPayload<T>()` uses Unity's `JsonUtility`, which does not
-read top-level arrays, nullable integers or dictionaries. There is no typed experience-data
-or archive wrapper in this package.
-
-`await CouchGamesSdk.OpenExperienceAsync(experienceId)` moves to an id from
-that list without reloading the game. The platform flushes the current saves,
-starts the new session, swaps files and updates the page URL, then raises the
-experience-changed event. On success the event has already been delivered. On
-`Success == false`, `Error` carries the platform's `message` and `RawJson`
-retains the full response.
-
-In a lobby, any member may call it and every member's game switches: the
-platform moves the lobby, then each member's page switches in place and raises
-the event once in that member's game, with `initiatedByMe` true only for the
-caller. So in co-op the handover below can begin in your game without it
-calling `OpenExperienceAsync`; the event ends it. If two members call at once,
-the first switch wins and the other caller gets `Success == false` but still
-gets the event for the first. After `The lobby did not answer`, the switch may
-still happen, and the event says so.
-
-**After calling `OpenExperienceAsync`, do nothing with the SDK until
-`couchgames:experience-changed` arrives or the call answers `Success == false`;
-requests meanwhile are refused with `Experience switch in progress`.**
-`LoadSaveResultAsync()` reports unavailable with that message. The platform
-exempts tracking/flushing, save flushing, lobby calls and signaling; the safe
-game-side rule is to wait. Synchronous cached getters are not a readiness
-signal: the save cache is empty during handover and the date stays old until
-the event.
-
-Refusals arrive as `Success == false` with the reason in `Error`, and no event
-follows unless the lobby moved anyway (above):
-
-| `Error` | When |
-| --- | --- |
-| `Experience id required` | The id is missing |
-| `Already on this experience` | The id is the experience the game is on |
-| `Unknown experience` | Not one of this game's openable experiences, or, in a lobby, a tester-only experience |
-| `This experience can't be opened` | Not released yet, or not openable from the archive |
-| `Challenges are locked until the campaign is finished` | The campaign-first lock holds |
-| `Experience switch in progress` | Another switch has not finished, or another lobby member's switch got there first |
-| `No session yet` | Called before the first session started, or, in a lobby, before playing the lobby's current experience |
-| `The lobby did not answer` | The lobby did not confirm the switch in time; it may still happen |
-| `Catalog unavailable` | The lobby could not read the experience catalog |
-| `Switching is not available here` | The page cannot switch (developer preview, or its lobby connection is down) |
-
-The campaign-lock refusal starts a fresh session on the current experience.
-A separate build per experience reloads the target as a fresh start and sends
-no change event to the old build.
+`await CouchGamesSdk.OpenExperienceAsync(experienceId)` switches to an id from
+that list without reloading. On success the experience-changed event has
+already been delivered. On `Success == false`, `Error` carries the platform's
+message ([the list](https://developer.couchgames.com/docs/experiences#open-experience)) and
+`RawJson` the full response. Until the event arrives or the call fails, make no
+other SDK calls.
 
 ### `couchgames:experience-changed`
 
-Subscribe through `CouchGamesSdk.Lobby.EventReceived` and compare the name with
-`CouchGamesLobby.ExperienceChangedEventName`. Initialize the SDK to connect
-the event bridge before opening an experience. This reserved event reaches
-solo games too, with an empty `SenderUserId` (no sender).
+Subscribe through `CouchGamesSdk.Lobby.EventReceived` and compare the name
+with `CouchGamesLobby.ExperienceChangedEventName`. Initialize the SDK first, so
+the event bridge is connected before you open an experience. The event reaches
+solo games too, with an empty `SenderUserId`, and in a lobby it can arrive
+because another member switched.
 
 ```csharp
 await CouchGamesSdk.InitializeAsync();
@@ -398,7 +313,7 @@ CouchGamesSdk.Lobby.EventReceived += message =>
 {
     if (message.EventName != CouchGamesLobby.ExperienceChangedEventName)
         return;
-    // Clear the board and load the new puzzle here. DataJson has the fields below.
+    // Clear the board and load the new puzzle. DataJson has the event's fields.
     Debug.Log(message.DataJson);
 };
 
@@ -407,19 +322,11 @@ if (!result.Success)
     Debug.LogWarning(result.Error);
 ```
 
-The event's `DataJson` contains `experienceId` (string), `experienceIndex`
-(number or null), `number` (number or null), `activatedAt` (ISO instant or
-null), and `initiatedByMe` (boolean). From the event onward, files, saves,
-experience data/date and gameplay completion refer to the new experience.
-Read the new experience from the event or `GetExperienceDataAsync()`;
-`Lobby.CurrentGame` is lobby-only and null solo on the platform.
-`CouchGamesSdk.ExperienceDataJson` refreshes on the event too: the mock's
-already holds the new experience when your handler runs, while on the platform
-it catches up once its request answers, so don't read it in the handler.
-
-In a lobby the event can also arrive because another member switched, with
-`initiatedByMe: false`. Handle it the same way: your handler should not depend
-on this game having called `OpenExperienceAsync` itself.
+`DataJson` holds the [event's fields](https://developer.couchgames.com/docs/experiences#reserved-event-couchgamesexperience-changed).
+`Lobby.CurrentGame` is null solo, so read the new experience from the event or
+`GetExperienceDataAsync()`. `CouchGamesSdk.ExperienceDataJson` also refreshes
+on the event, but on the platform only after its request answers, so don't read
+it in your handler.
 
 ### Trying archive switching without the platform
 
@@ -445,16 +352,14 @@ CouchGamesMock.Streak = 3;
 
 `State` is the local player's. Each row's `players` lists every mock lobby
 member (add guests in the Mock Lobby window): the local player at `State`, the
-others at their `PlayerStates` entry by `userId`, or `"none"`.
-`CouchGamesMock.Streak` is the `Streak` the mock answers on the list and on
-`GameplayCompleteAsync()`; the mock doesn't count completions. Mock experience
-data carries the current entry's `number`.
+others at their `PlayerStates` entry, or `"none"`. `CouchGamesMock.Streak` is
+the `Streak` the mock answers on the list and on `GameplayCompleteAsync()`; the
+mock doesn't count completions.
 
 Opening a listed id updates the mock's experience data and date and raises the
-reserved event through the usual mock lobby-event path, with
-`initiatedByMe: true` and no sender, before the task completes with success.
-Missing, current and unknown ids fail without an event. This is a lightweight
-simulation: files still come from `CouchGamesMock.ExperienceFilesDirectory`,
-saves and metadata keep their shared mock storage, and the switch is
-synchronous, so there is no in-flight refusal window, no other-member switch,
-and no campaign-lock session reset.
+event through the mock lobby, with `initiatedByMe: true` and no sender, before
+the call succeeds. Missing, current and unknown ids fail without an event. It's
+a light simulation: files still come from
+`CouchGamesMock.ExperienceFilesDirectory`, saves and metadata share one mock
+store, and the switch is instant, so there's no in-flight refusal, no other
+member switching, and no campaign-lock reset.
