@@ -49,6 +49,34 @@ namespace Animo.CouchGames
         public static int Streak { get; set; }
 
         /// <summary>
+        /// How the mock session was launched, as <see cref="CouchGamesSdk.PlayMode"/>
+        /// reports it: null (a plain single-player launch), "1-device" or
+        /// "2-devices". Use <see cref="SelectPlayMode"/> to change it the way the
+        /// platform does, raising <see cref="CouchGamesSdk.PlayModeSelected"/>.
+        /// </summary>
+        public static string PlayMode { get; set; }
+
+        /// <summary>The mock session's code, as <see cref="CouchGamesSdk.ShareCode"/> reports it.</summary>
+        public static string ShareCode { get; set; }
+
+        /// <summary>Pretend this client joined someone else's session (<see cref="CouchGamesSdk.IsJoining"/>).</summary>
+        public static bool IsJoining { get; set; }
+
+        /// <summary>Sets the play mode and code and raises <see cref="CouchGamesSdk.PlayModeSelected"/>.</summary>
+        public static void SelectPlayMode(string mode, string code)
+        {
+            PlayMode = mode;
+            ShareCode = code;
+            CouchGamesSdk.RaisePlayModeSelected(mode ?? string.Empty, code ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Every <see cref="CouchGamesSdk.Track"/> call this run, oldest first:
+        /// what the platform would have queued. The mock sends nothing anywhere.
+        /// </summary>
+        public static List<CouchGamesMockEvent> TrackedEvents { get; } = new List<CouchGamesMockEvent>();
+
+        /// <summary>
         /// The local folder that stands in for the current experience's files.
         /// Every file directly inside it is served by basename through
         /// <see cref="CouchGamesSdk.Experience"/>; subfolders, dotfiles, and
@@ -164,5 +192,12 @@ namespace Animo.CouchGames
 
         internal string IndexJson => ExperienceIndex?.ToString(CultureInfo.InvariantCulture) ?? "null";
         internal string NumberJson => Number?.ToString(CultureInfo.InvariantCulture) ?? "null";
+    }
+
+    /// <summary>One <see cref="CouchGamesSdk.Track"/> call the mock recorded.</summary>
+    public sealed class CouchGamesMockEvent
+    {
+        public string Name { get; set; }
+        public string PropertiesJson { get; set; }
     }
 }

@@ -217,9 +217,47 @@ files.
 
 ## Supported platform API
 
-Saves, gameplay, experience data and date, experience files, game metadata,
-achievements, session stats, the lobby (roster, identity, current game and
-events), and `ListExperiencesAsync()` / `OpenExperienceAsync(experienceId)`.
+Everything in the [guide](https://developer.couchgames.com/docs): saves
+(including `FlushSavesAsync()`), gameplay and `CompleteCampaignAsync()`,
+experience data and date, experience files, shared game assets, game metadata
+(including `DeleteGameMetadataAsync()` and `ClearGameMetadataAsync()`),
+achievements, session stats, telemetry, play modes, the lobby, WebRTC
+signaling, and `ListExperiencesAsync()` / `OpenExperienceAsync(experienceId)`.
+
+```csharp
+var done = await CouchGamesSdk.CompleteCampaignAsync();   // done.AlreadyCompleted on a repeat
+var sent = await CouchGamesSdk.FlushSavesAsync();         // sent.Persisted, sent.Flushed
+await CouchGamesSdk.DeleteGameMetadataAsync("settings", "volume");
+CouchGamesSdk.Track("level_complete", "{\"level\":3,\"success\":true}");
+await CouchGamesSdk.FlushTelemetryAsync();
+var url = await CouchGamesSdk.GetSharedFileUrlAsync("audio/theme.ogg");
+```
+
+The mock records `CompleteCampaignAsync()` once (it doesn't know which
+experience is the campaign), keeps every `Track()` call in
+`CouchGamesMock.TrackedEvents` instead of sending it, has no shared assets, and
+doesn't simulate signaling.
+
+### Play modes
+
+```csharp
+await CouchGamesSdk.InitializeAsync();
+CouchGamesSdk.PlayModeSelected += OnPlayMode;            // (mode, code)
+OnPlayMode(CouchGamesSdk.PlayMode, CouchGamesSdk.ShareCode); // it can fire before you subscribe
+```
+
+`PlayMode` is `"1-device"`, `"2-devices"` or null; `IsJoining` is true for a
+guest ([guide](https://developer.couchgames.com/docs/multiplayer#play-modes-and-room-codes)).
+In the mock, `CouchGamesMock.SelectPlayMode("2-devices", "ABCD")` raises the
+event, and `CouchGamesMock.IsJoining` makes this client a guest.
+
+### WebRTC signaling
+
+`CouchGamesSdk.WebRtc` finds the other player: `ConnectSignalingAsync(code)`,
+`SendSignal(peerId, json)`, and the `PeerExists`, `PeerJoined`, `PeerLeft` and
+`SignalReceived` events ([guide](https://developer.couchgames.com/docs/multiplayer#connect-players-with-webrtc)).
+Unity's WebGL player has no WebRTC of its own, so the peer connection itself
+is yours: a WebRTC package, or your own JavaScript.
 
 ### Gameplay completion and the streak
 

@@ -22,6 +22,29 @@ namespace Animo.CouchGames
         public static CouchGamesExperience Experience { get; } = new CouchGamesExperience();
         public static CouchLobbyPlayer LocalPlayer { get; internal set; }
 
+        /// <summary>WebRTC signaling and TURN/STUN servers. See <see cref="CouchGamesWebRtc"/>.</summary>
+        public static CouchGamesWebRtc WebRtc { get; } = new CouchGamesWebRtc();
+
+        /// <summary>
+        /// Raised with <c>(mode, code)</c> when a session's play mode is chosen or
+        /// changes: "1-device" (everyone on this screen) or "2-devices" (each
+        /// player on their own device). The code can be empty at first and filled
+        /// later, so wait for one before connecting. It can fire during
+        /// <see cref="InitializeAsync"/>, before you subscribe: read
+        /// <see cref="PlayMode"/> and <see cref="ShareCode"/> after initializing
+        /// as well.
+        /// </summary>
+        public static event Action<string, string> PlayModeSelected;
+
+        /// <summary>"1-device", "2-devices", or null for a plain single-player launch.</summary>
+        public static string PlayMode => NullIfEmpty(CouchGamesRuntime.Instance.GetPlayState().mode);
+
+        /// <summary>The session's code; every client of a remote session gets the same one. Null when there is none.</summary>
+        public static string ShareCode => NullIfEmpty(CouchGamesRuntime.Instance.GetPlayState().code);
+
+        /// <summary>True for a guest (a client that joined someone else's session), false for the host.</summary>
+        public static bool IsJoining => CouchGamesRuntime.Instance.GetPlayState().joining;
+
         public static Task InitializeAsync()
         {
             return _initialization ??= InitializeInternalAsync();
@@ -126,6 +149,18 @@ namespace Animo.CouchGames
             return CouchGamesSaveLoadResult.FromBridge(bridge);
         }
 
+        /// <summary>
+        /// Sends saves already made without waiting for the platform's next
+        /// batch (at most one every 5 seconds). Await it before a moment that
+        /// matters, such as the end of a level. Branch on
+        /// <see cref="CouchGamesResponse.Persisted"/>;
+        /// <see cref="CouchGamesResponse.Flushed"/> is how many saves it sent.
+        /// </summary>
+        public static Task<CouchGamesResponse> FlushSavesAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("flushSaves", "[]");
+        }
+
         public static Task<CouchGamesResponse> GameplayStartAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayStart", "[]");
@@ -143,6 +178,18 @@ namespace Animo.CouchGames
         public static Task<CouchGamesResponse> GameplayCompleteAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("gameplayComplete", "[]");
+        }
+
+        /// <summary>
+        /// For games with a campaign and challenges: call once, when the player
+        /// finishes the campaign (its last level or its ending), not per level.
+        /// Recorded once per player; a repeat succeeds with
+        /// <see cref="CouchGamesResponse.AlreadyCompleted"/>. Only a campaign
+        /// session can record it ("Not a campaign session" otherwise).
+        /// </summary>
+        public static Task<CouchGamesResponse> CompleteCampaignAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("completeCampaign", "[]");
         }
 
         /// <summary>
@@ -198,6 +245,117 @@ namespace Animo.CouchGames
             return runtime.InvokeAsync(
                 "setGameMetadata",
                 JsonArray(JsonString(category), JsonString(key), JsonString(value)));
+        }
+
+        /// <summary>
+        /// Removes one key. A category left with no keys disappears.
+        /// <see cref="CouchGamesResponse.PayloadJson"/> is the metadata after the delete.
+        /// </summary>
+        public static Task<CouchGamesResponse> DeleteGameMetadataAsync(string category, string key)
+        {
+            var runtime = CouchGamesRuntime.Instance;
+            if (runtime.IsMock)
+                return Task.FromResult(runtime.DeleteMockMetadata(category, key));
+            return runtime.InvokeAsync(
+                "deleteGameMetadata",
+                JsonArray(JsonString(category), JsonString(key)));
+        }
+
+        /// <summary>Deletes all of the player's metadata for this game.</summary>
+        public static Task<CouchGamesResponse> ClearGameMetadataAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("clearGameMetadata", "[]");
+        }
+
+        /// <summary>
+        /// Queues an optional gameplay event for your own analysis. Never fails;
+        /// the platform sends the queue every 5 seconds or at 25 events.
+        /// <paramref name="propertiesJson"/> is a flat JSON object of strings,
+        /// numbers, booleans and nulls (at most 32 keys), or null. Telemetry
+        /// doesn't replace the gameplay calls and doesn't save anything.
+        /// </summary>
+        public static void Track(string eventName, string propertiesJson = null)
+        {
+            var runtime = CouchGamesRuntime.Instance;
+            if (runtime.IsMock)
+            {
+                runtime.TrackMock(eventName, propertiesJson);
+                return;
+            }
+            _ = runtime.InvokeAsync(
+                "track",
+                JsonArray(JsonString(eventName), string.IsNullOrEmpty(propertiesJson) ? "null" : propertiesJson));
+        }
+
+        /// <summary>
+        /// Sends queued events now instead of at the next automatic send. It
+        /// reports nothing back: success doesn't mean the events were stored.
+        /// </summary>
+        public static Task<CouchGamesResponse> FlushTelemetryAsync()
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync("flush", "[]");
+        }
+
+        /// <summary>
+        /// Where this launch's shared game assets live, or null when it has none
+        /// (and always in the mock). Use it to check; never build a file's URL
+        /// from it: use <see cref="GetSharedFileUrlAsync"/>.
+        /// </summary>
+        public static async Task<string> GetSharedRootAsync()
+        {
+            var response = await CouchGamesRuntime.Instance.InvokeAsync("game.getSharedRoot", "[]");
+            return response.Success ? ReadJsonString(response.PayloadJson) : null;
+        }
+
+        /// <summary>
+        /// A shared file's URL, absolute and already encoded, by its plain path
+        /// ("levels/week 1/cafe.pck"). Null when the launch has no shared assets,
+        /// the path is invalid or missing, or the page navigated meanwhile.
+        /// </summary>
+        public static async Task<string> GetSharedFileUrlAsync(string path)
+        {
+            var response = await CouchGamesRuntime.Instance.InvokeAsync(
+                "game.getSharedFileURL", JsonArray(JsonString(path)));
+            if (!response.Success)
+            {
+                Debug.LogError($"Couch Games: shared file '{path}' unavailable: {response.Error}");
+                return null;
+            }
+            return ReadJsonString(response.PayloadJson);
+        }
+
+        /// <summary>
+        /// A shared file's URL, SHA-256 and size, as JSON in
+        /// <see cref="CouchGamesResponse.PayloadJson"/>: <c>{ url, sha256, size }</c>.
+        /// </summary>
+        public static Task<CouchGamesResponse> GetSharedFileInfoAsync(string path)
+        {
+            return CouchGamesRuntime.Instance.InvokeAsync(
+                "game.getSharedFileInfo", JsonArray(JsonString(path)));
+        }
+
+        internal static void RaisePlayModeSelected(string mode, string code)
+        {
+            PlayModeSelected?.Invoke(mode ?? string.Empty, code ?? string.Empty);
+        }
+
+        private static string NullIfEmpty(string value)
+        {
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+
+        /// <summary>A JSON string literal (<c>"https://…"</c>) as a string; null for anything else.</summary>
+        internal static string ReadJsonString(string json)
+        {
+            if (string.IsNullOrEmpty(json) || json[0] != '"')
+                return null;
+            return JsonUtility.FromJson<JsonStringBox>("{\"value\":" + json + "}")?.value;
+        }
+
+        [Serializable]
+        private sealed class JsonStringBox
+        {
+            public string value = null;
         }
 
         public static Task<CouchGamesResponse> UnlockAchievementAsync(string key)

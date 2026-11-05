@@ -111,8 +111,33 @@ namespace Animo.CouchGames
                 nameof(OnCouchGamesIdentity),
                 nameof(OnCouchGamesCurrentGame)) != 0;
             CouchGamesSdk.Lobby.IsAvailable = lobbyAvailable;
+            CGU_InitializePlayMode(gameObject.name, nameof(OnCouchGamesPlayMode));
+            CouchGamesSdk.WebRtc.IsAvailable =
+                CGU_InitializeWebRtc(gameObject.name, nameof(OnCouchGamesWebRtc)) != 0;
 #endif
             return Task.CompletedTask;
+        }
+
+        /// <summary>How this session was launched: the platform's, or the mock's settings.</summary>
+        internal PlayStateEnvelope GetPlayState()
+        {
+            if (IsMock)
+            {
+                return new PlayStateEnvelope
+                {
+                    mode = CouchGamesMock.PlayMode ?? string.Empty,
+                    code = CouchGamesMock.ShareCode ?? string.Empty,
+                    joining = CouchGamesMock.IsJoining
+                };
+            }
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var json = PointerToStringAndFree(CGU_GetPlayState());
+            return string.IsNullOrEmpty(json)
+                ? new PlayStateEnvelope()
+                : JsonUtility.FromJson<PlayStateEnvelope>(json) ?? new PlayStateEnvelope();
+#else
+            return new PlayStateEnvelope();
+#endif
         }
 
         internal async Task<CouchGamesResponse> InvokeAsync(string method, string argumentsJson)
@@ -129,7 +154,10 @@ namespace Animo.CouchGames
                 bridge.persisted,
                 bridge.conflict,
                 bridge.hasCurrentRevision ? bridge.currentRevision : (long?)null,
-                bridge.hasStreak ? bridge.streak : (int?)null);
+                bridge.hasStreak ? bridge.streak : (int?)null,
+                bridge.alreadyCompleted,
+                bridge.alreadyUnlocked,
+                bridge.flushed);
         }
 
         internal Task<BridgeResponse> InvokeBridgeAsync(string method, string argumentsJson)
@@ -429,7 +457,8 @@ namespace Animo.CouchGames
 
         internal CouchGamesResponse UnlockMockAchievement(string key)
         {
-            if (!_mockStore.achievements.Any(item => item.key == key))
+            var already = _mockStore.achievements.Any(item => item.key == key);
+            if (!already)
             {
                 _mockStore.achievements.Add(new MockAchievement
                 {
@@ -439,7 +468,25 @@ namespace Animo.CouchGames
                 PersistMock();
             }
 
-            return CouchGamesResponse.Ok();
+            return new CouchGamesResponse(true, string.Empty, "{}", "{}", alreadyUnlocked: already);
+        }
+
+        /// <summary>Removes one key; a category left with no keys disappears with it.</summary>
+        internal CouchGamesResponse DeleteMockMetadata(string category, string key)
+        {
+            _mockStore.metadata.RemoveAll(item => item.category == category && item.key == key);
+            PersistMock();
+            var metadataJson = BuildMetadataJson();
+            return new CouchGamesResponse(true, string.Empty, metadataJson, metadataJson);
+        }
+
+        internal void TrackMock(string eventName, string propertiesJson)
+        {
+            CouchGamesMock.TrackedEvents.Add(new CouchGamesMockEvent
+            {
+                Name = eventName ?? string.Empty,
+                PropertiesJson = string.IsNullOrEmpty(propertiesJson) ? "null" : propertiesJson
+            });
         }
 
         internal void SendLobbyEvent(string eventName, string dataJson, CouchLobbyTarget target)
@@ -588,6 +635,20 @@ namespace Animo.CouchGames
                 : JsonUtility.FromJson<CouchLobbyCurrentGame>(json);
         }
 
+        public void OnCouchGamesPlayMode(string json)
+        {
+            var message = JsonUtility.FromJson<PlayStateEnvelope>(json);
+            if (message != null)
+                CouchGamesSdk.RaisePlayModeSelected(message.mode, message.code);
+        }
+
+        public void OnCouchGamesWebRtc(string json)
+        {
+            var message = JsonUtility.FromJson<WebRtcEnvelope>(json);
+            if (message != null)
+                CouchGamesSdk.WebRtc.Receive(message);
+        }
+
         private void InitializeMock()
         {
             _mockStore = LoadMock();
@@ -671,6 +732,37 @@ namespace Animo.CouchGames
                         cumulativeGameplayTimeMs = _mockStore.cumulativeGameplayTimeMs,
                         gameplayCompleted = _mockStore.gameplayCompleted
                     }));
+                case "flushSaves":
+                    // Mock saves are written as they're made, so nothing is ever waiting.
+                    return new CouchGamesResponse(true, string.Empty, "null", "{}", persisted: true);
+                case "completeCampaign":
+                    // Write-once, like the platform's. The mock doesn't know whether the
+                    // current experience is the campaign, so it always records.
+                    var alreadyCompleted = _mockStore.campaignCompleted;
+                    if (!alreadyCompleted)
+                    {
+                        _mockStore.campaignCompleted = true;
+                        PersistMock();
+                    }
+                    return new CouchGamesResponse(true, string.Empty, "null", "{}", alreadyCompleted: alreadyCompleted);
+                case "clearGameMetadata":
+                    _mockStore.metadata.Clear();
+                    PersistMock();
+                    return CouchGamesResponse.Ok("null");
+                case "flush":
+                    return CouchGamesResponse.Ok("null");
+                case "game.getSharedRoot":
+                    // The mock has no launch manifest, so no shared assets.
+                    return CouchGamesResponse.Ok("null");
+                case "game.getSharedFileURL":
+                case "game.getSharedFileInfo":
+                    return CouchGamesResponse.Failed("The mock has no shared assets.");
+                case "webrtc.connectSignaling":
+                case "webrtc.sendSignal":
+                case "webrtc.disconnect":
+                case "webrtc.requestPeers":
+                case "webrtc.requestIceServers":
+                    return CouchGamesResponse.Failed("The mock doesn't simulate signaling; test it on the platform.");
                 default:
                     return CouchGamesResponse.Failed($"Mock call '{method}' requires typed arguments or is unsupported.");
             }
@@ -825,6 +917,11 @@ namespace Animo.CouchGames
             string currentGameCallback);
         [DllImport("__Internal")] private static extern void CGU_LobbySendEvent(
             string eventName, string dataJson, string targetJson);
+        [DllImport("__Internal")] private static extern int CGU_InitializePlayMode(
+            string gameObjectName, string callback);
+        [DllImport("__Internal")] private static extern IntPtr CGU_GetPlayState();
+        [DllImport("__Internal")] private static extern int CGU_InitializeWebRtc(
+            string gameObjectName, string callback);
         [DllImport("__Internal")] private static extern IntPtr CGU_LoadLatestSaveSync();
         [DllImport("__Internal")] private static extern IntPtr CGU_GetExperienceDateSync();
         [DllImport("__Internal")] private static extern IntPtr CGU_ExperienceListFiles();
@@ -843,6 +940,7 @@ namespace Animo.CouchGames
             public string experienceDate = "2026-01-01T00:00:00.000Z";
             public double cumulativeGameplayTimeMs;
             public bool gameplayCompleted;
+            public bool campaignCompleted;
             public List<MockMetadataEntry> metadata = new List<MockMetadataEntry>();
             public List<MockAchievement> achievements = new List<MockAchievement>();
         }
@@ -896,5 +994,26 @@ namespace Animo.CouchGames
             public double cumulativeGameplayTimeMs;
             public bool gameplayCompleted;
         }
+    }
+
+    /// <summary>How a session was launched, as the bridge reports it.</summary>
+    [Serializable]
+    internal sealed class PlayStateEnvelope
+    {
+        public string mode = "";
+        public string code = "";
+        public bool joining = false;
+    }
+
+    /// <summary>One signaling event from the bridge.</summary>
+    [Serializable]
+    internal sealed class WebRtcEnvelope
+    {
+        public string type = "";
+        public string peerId = "";
+        public string roomId = "";
+        public string dataJson = "null";
+        public string[] peerIds = null;
+        public string iceServersJson = "[]";
     }
 }

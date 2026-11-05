@@ -87,6 +87,24 @@ namespace Animo.CouchGames
         /// </summary>
         public int? Streak { get; }
 
+        /// <summary>
+        /// <see cref="CouchGamesSdk.CompleteCampaignAsync"/> only: true when this
+        /// player had already finished the campaign, so nothing new was recorded.
+        /// </summary>
+        public bool AlreadyCompleted { get; }
+
+        /// <summary>
+        /// <see cref="CouchGamesSdk.UnlockAchievementAsync"/> only: true when the
+        /// player already had the achievement.
+        /// </summary>
+        public bool AlreadyUnlocked { get; }
+
+        /// <summary>
+        /// <see cref="CouchGamesSdk.FlushSavesAsync"/> only: how many saves it
+        /// sent (0 when none were waiting).
+        /// </summary>
+        public int Flushed { get; }
+
         internal CouchGamesResponse(
             bool success,
             string error,
@@ -95,7 +113,10 @@ namespace Animo.CouchGames
             bool persisted = false,
             bool conflict = false,
             long? currentRevision = null,
-            int? streak = null)
+            int? streak = null,
+            bool alreadyCompleted = false,
+            bool alreadyUnlocked = false,
+            int flushed = 0)
         {
             Success = success;
             Error = error ?? string.Empty;
@@ -105,6 +126,9 @@ namespace Animo.CouchGames
             Conflict = conflict;
             CurrentRevision = currentRevision;
             Streak = streak;
+            AlreadyCompleted = alreadyCompleted;
+            AlreadyUnlocked = alreadyUnlocked;
+            Flushed = flushed;
         }
 
         public T GetPayload<T>()
@@ -150,5 +174,8 @@ namespace Animo.CouchGames
         public bool hostAuthoritative = false;
         public bool hasStreak = false;
         public int streak = 0;
+        public bool alreadyCompleted = false;
+        public bool alreadyUnlocked = false;
+        public int flushed = 0;
     }
 }
