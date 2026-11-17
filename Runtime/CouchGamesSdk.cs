@@ -45,6 +45,39 @@ namespace Animo.CouchGames
         /// <summary>True for a guest (a client that joined someone else's session), false for the host.</summary>
         public static bool IsJoining => CouchGamesRuntime.Instance.GetPlayState().joining;
 
+        /// <summary>
+        /// Raised with the new state on every change of the platform's
+        /// fullscreen, whoever made it: the game, the play bar or Esc. Not on
+        /// subscribing: read <see cref="IsFullscreen"/> once, then listen.
+        /// Connected by <see cref="InitializeAsync"/>.
+        /// </summary>
+        public static event Action<bool> FullscreenChanged;
+
+        /// <summary>
+        /// Raised with the platform's new settings on each change. Connected by
+        /// <see cref="InitializeAsync"/>.
+        /// </summary>
+        public static event Action<CouchGamesSettings> SettingsChanged;
+
+        /// <summary>Whether the game is in the platform's fullscreen. Pick your fullscreen button's icon from it.</summary>
+        public static bool IsFullscreen => CouchGamesRuntime.Instance.GetFullscreenState().fullscreen;
+
+        /// <summary>
+        /// Whether <see cref="RequestFullscreenAsync"/> and
+        /// <see cref="ExitFullscreenAsync"/> can change the view here: false on
+        /// a phone, which always plays fullscreen, and wherever the platform has
+        /// no fullscreen view. Holds for the whole run. Show your own fullscreen
+        /// button only when it's true.
+        /// </summary>
+        public static bool CanToggleFullscreen => CouchGamesRuntime.Instance.GetFullscreenState().canToggle;
+
+        /// <summary>
+        /// The platform's settings for the game, a fresh copy on each read.
+        /// While <see cref="CouchGamesSettings.MuteAudio"/> is true, play no
+        /// sound whatever your own sound setting says.
+        /// </summary>
+        public static CouchGamesSettings Settings => CouchGamesRuntime.Instance.GetSettings();
+
         public static Task InitializeAsync()
         {
             return _initialization ??= InitializeInternalAsync();
@@ -224,6 +257,36 @@ namespace Animo.CouchGames
                 "openExperience", JsonArray(JsonString(experienceId)));
         }
 
+        /// <summary>
+        /// Asks for the platform's fullscreen: the play bar's own view, the game
+        /// with the bar under it, not <c>Screen.fullScreen</c>. Call it from the
+        /// player's input (a button's click): the browser allows fullscreen only
+        /// for a few seconds after a tap, click or key press, so not from a
+        /// timer or a network reply. <see cref="CouchGamesResponse.Success"/>
+        /// means the game is now in the state it asked for;
+        /// <see cref="CouchGamesResponse.Fullscreen"/> is the state after the call.
+        /// </summary>
+        public static Task<CouchGamesResponse> RequestFullscreenAsync()
+        {
+            return FullscreenCallAsync("requestFullscreen");
+        }
+
+        /// <summary>Leaves the platform's fullscreen. See <see cref="RequestFullscreenAsync"/>.</summary>
+        public static Task<CouchGamesResponse> ExitFullscreenAsync()
+        {
+            return FullscreenCallAsync("exitFullscreen");
+        }
+
+        // The bridge reaches window.CouchGames before anything is awaited, inside
+        // the player's input, which is all the browser allows fullscreen in.
+        private static Task<CouchGamesResponse> FullscreenCallAsync(string method)
+        {
+            var runtime = CouchGamesRuntime.Instance;
+            if (!runtime.IsMock && !runtime.GetFullscreenState().available)
+                return Task.FromResult(new CouchGamesResponse(false, "Not available", "null", "null"));
+            return runtime.InvokeAsync(method, "[]");
+        }
+
         public static Task<CouchGamesResponse> GetExperienceDateAsync()
         {
             return CouchGamesRuntime.Instance.InvokeAsync("getExperienceDate", "[]");
@@ -337,6 +400,16 @@ namespace Animo.CouchGames
         internal static void RaisePlayModeSelected(string mode, string code)
         {
             PlayModeSelected?.Invoke(mode ?? string.Empty, code ?? string.Empty);
+        }
+
+        internal static void RaiseFullscreenChanged(bool fullscreen)
+        {
+            FullscreenChanged?.Invoke(fullscreen);
+        }
+
+        internal static void RaiseSettingsChanged(CouchGamesSettings settings)
+        {
+            SettingsChanged?.Invoke(settings);
         }
 
         private static string NullIfEmpty(string value)

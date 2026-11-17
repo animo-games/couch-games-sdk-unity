@@ -71,6 +71,14 @@ namespace Animo.CouchGames.Editor
             }
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Fullscreen and Mute", EditorStyles.boldLabel);
+            CouchGamesMock.Fullscreen = EditorGUILayout.Toggle("Fullscreen", CouchGamesMock.Fullscreen);
+            CouchGamesMock.FullscreenToggleable = EditorGUILayout.Toggle(
+                new GUIContent("Toggleable", "Off rehearses a phone, which always plays fullscreen."),
+                CouchGamesMock.FullscreenToggleable);
+            CouchGamesMock.MuteAudio = EditorGUILayout.Toggle("Mute audio", CouchGamesMock.MuteAudio);
+
+            EditorGUILayout.Space();
             EditorGUILayout.LabelField("Experience Files", EditorStyles.boldLabel);
             var experienceDirectory = CouchGamesMock.ExperienceFilesDirectory;
             EditorGUILayout.SelectableLabel(experienceDirectory, GUILayout.Height(EditorGUIUtility.singleLineHeight));
