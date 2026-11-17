@@ -219,8 +219,9 @@ add while playing show up at once.
 Mock data persists under `Application.persistentDataPath`. The **Saves**
 section shows the stored revision and the `CouchGamesMock` switches above
 (unavailable load, joining as a guest, refusing the next save, clearing all
-mock data). The **Experience Files** section shows the mock folder and its
-files. From code, `CouchGamesSdk.Lobby.AddMockGuest(name)`,
+mock data). The **Fullscreen and Mute** section flips the mock's fullscreen,
+rehearses a phone, and mutes. The **Experience Files** section shows the mock
+folder and its files. From code, `CouchGamesSdk.Lobby.AddMockGuest(name)`,
 `RemoveMockPlayer(userId)` and `SimulateMockEvent(name, dataJson, senderUserId)`
 do what the window's buttons do.
 
@@ -230,8 +231,9 @@ Everything in the [guide](https://developer.couchgames.com/docs): saves
 (including `FlushSavesAsync()`), gameplay and `CompleteCampaignAsync()`,
 experience data and date, experience files, shared game assets, game metadata
 (including `DeleteGameMetadataAsync()` and `ClearGameMetadataAsync()`),
-achievements, session stats, telemetry, play modes, the lobby, WebRTC
-signaling, and `ListExperiencesAsync()` / `OpenExperienceAsync(experienceId)`.
+achievements, session stats, telemetry, play modes, fullscreen and mute, the
+lobby, WebRTC signaling, and `ListExperiencesAsync()` /
+`OpenExperienceAsync(experienceId)`.
 
 ```csharp
 var done = await CouchGamesSdk.CompleteCampaignAsync();   // done.AlreadyCompleted on a repeat
@@ -259,6 +261,50 @@ OnPlayMode(CouchGamesSdk.PlayMode, CouchGamesSdk.ShareCode); // it can fire befo
 guest ([guide](https://developer.couchgames.com/docs/multiplayer#play-modes-and-room-codes)).
 In the mock, `CouchGamesMock.SelectPlayMode("2-devices", "ABCD")` raises the
 event, and `CouchGamesMock.IsJoining` makes this client a guest.
+
+### Fullscreen and mute
+
+A fullscreen button in your own UI asks for the platform's fullscreen, the play
+bar's own view (the game with the bar under it), not `Screen.fullScreen`:
+
+```csharp
+await CouchGamesSdk.InitializeAsync();
+fullscreenButton.gameObject.SetActive(CouchGamesSdk.CanToggleFullscreen);
+ShowFullscreenIcon(CouchGamesSdk.IsFullscreen);
+CouchGamesSdk.FullscreenChanged += ShowFullscreenIcon;
+fullscreenButton.onClick.AddListener(async () =>
+{
+    var result = CouchGamesSdk.IsFullscreen
+        ? await CouchGamesSdk.ExitFullscreenAsync()
+        : await CouchGamesSdk.RequestFullscreenAsync();
+    if (!result.Success)
+        Debug.Log(result.Error); // result.Fullscreen is the state now
+});
+```
+
+Call it from the player's input, as a button's click is: the browser allows
+fullscreen only for a few seconds after a tap, click or key press.
+`FullscreenChanged` reports every change, the player's too (the bar, Esc), but
+not on subscribing. `CouchGamesSdk.Settings.MuteAudio` is the platform's mute,
+and `SettingsChanged` reports each change: while it's true, play no sound
+whatever your own sound setting says.
+
+```csharp
+ApplyMute(CouchGamesSdk.Settings);
+CouchGamesSdk.SettingsChanged += ApplyMute;
+
+void ApplyMute(CouchGamesSettings settings)
+{
+    AudioListener.volume = settings.MuteAudio || !soundOn ? 0f : 1f; // soundOn: your own setting
+}
+```
+
+The rules are in the [guide](https://developer.couchgames.com/docs/fullscreen-and-mute).
+In the mock, `CouchGamesMock.Fullscreen` rehearses the player leaving
+fullscreen, `CouchGamesMock.FullscreenToggleable = false` a phone, and
+`CouchGamesMock.MuteAudio` the platform's mute; each change raises its event.
+On a platform build without these calls, both requests answer
+`Success == false`, "Not available", and every read is false.
 
 ### WebRTC signaling
 

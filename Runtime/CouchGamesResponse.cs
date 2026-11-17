@@ -105,6 +105,13 @@ namespace Animo.CouchGames
         /// </summary>
         public int Flushed { get; }
 
+        /// <summary>
+        /// <see cref="CouchGamesSdk.RequestFullscreenAsync"/> and
+        /// <see cref="CouchGamesSdk.ExitFullscreenAsync"/> only: whether the game
+        /// is fullscreen after the call.
+        /// </summary>
+        public bool Fullscreen { get; }
+
         internal CouchGamesResponse(
             bool success,
             string error,
@@ -116,7 +123,8 @@ namespace Animo.CouchGames
             int? streak = null,
             bool alreadyCompleted = false,
             bool alreadyUnlocked = false,
-            int flushed = 0)
+            int flushed = 0,
+            bool fullscreen = false)
         {
             Success = success;
             Error = error ?? string.Empty;
@@ -129,6 +137,7 @@ namespace Animo.CouchGames
             AlreadyCompleted = alreadyCompleted;
             AlreadyUnlocked = alreadyUnlocked;
             Flushed = flushed;
+            Fullscreen = fullscreen;
         }
 
         public T GetPayload<T>()
@@ -177,5 +186,37 @@ namespace Animo.CouchGames
         public bool alreadyCompleted = false;
         public bool alreadyUnlocked = false;
         public int flushed = 0;
+        public bool fullscreen = false;
+    }
+
+    /// <summary>The platform's settings for the game (<see cref="CouchGamesSdk.Settings"/>).</summary>
+    public sealed class CouchGamesSettings
+    {
+        /// <summary>
+        /// While true, play no sound whatever your own sound setting says, and
+        /// don't let that setting turn sound back on. When it goes back to
+        /// false, your own setting applies again.
+        /// </summary>
+        public bool MuteAudio { get; }
+
+        public CouchGamesSettings(bool muteAudio)
+        {
+            MuteAudio = muteAudio;
+        }
+    }
+
+    [Serializable]
+    internal sealed class SettingsEnvelope
+    {
+        public bool muteAudio = false;
+    }
+
+    [Serializable]
+    internal sealed class FullscreenStateEnvelope
+    {
+        /// <summary>False on a platform build without the fullscreen calls.</summary>
+        public bool available = false;
+        public bool fullscreen = false;
+        public bool canToggle = false;
     }
 }

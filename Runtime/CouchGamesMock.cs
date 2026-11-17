@@ -22,6 +22,8 @@ namespace Animo.CouchGames
         public const string DefaultExperienceFilesFolderName = "CouchGamesExperience";
 
         private static string _experienceFilesDirectory;
+        private static bool _fullscreen;
+        private static bool _muteAudio;
 
         /// <summary>
         /// The challenges the mock archive lists, oldest first. The mock starts
@@ -68,6 +70,49 @@ namespace Animo.CouchGames
             PlayMode = mode;
             ShareCode = code;
             CouchGamesSdk.RaisePlayModeSelected(mode ?? string.Empty, code ?? string.Empty);
+        }
+
+        /// <summary>
+        /// The platform's fullscreen as the mock reports it.
+        /// <see cref="CouchGamesSdk.RequestFullscreenAsync"/> and
+        /// <see cref="CouchGamesSdk.ExitFullscreenAsync"/> flip it; set it
+        /// yourself to rehearse the player changing it (the play bar, Esc),
+        /// which raises <see cref="CouchGamesSdk.FullscreenChanged"/> as the
+        /// platform does. In memory only.
+        /// </summary>
+        public static bool Fullscreen
+        {
+            get => _fullscreen;
+            set
+            {
+                if (_fullscreen == value)
+                    return;
+                _fullscreen = value;
+                CouchGamesSdk.RaiseFullscreenChanged(value);
+            }
+        }
+
+        /// <summary>
+        /// False rehearses a phone, which always plays fullscreen: the calls
+        /// change nothing and <see cref="CouchGamesSdk.CanToggleFullscreen"/> is false.
+        /// </summary>
+        public static bool FullscreenToggleable { get; set; } = true;
+
+        /// <summary>
+        /// The platform's mute setting. Setting it raises
+        /// <see cref="CouchGamesSdk.SettingsChanged"/>, as the platform's own
+        /// control would. In memory only.
+        /// </summary>
+        public static bool MuteAudio
+        {
+            get => _muteAudio;
+            set
+            {
+                if (_muteAudio == value)
+                    return;
+                _muteAudio = value;
+                CouchGamesSdk.RaiseSettingsChanged(new CouchGamesSettings(value));
+            }
         }
 
         /// <summary>

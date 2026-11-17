@@ -114,6 +114,8 @@ namespace Animo.CouchGames
             CGU_InitializePlayMode(gameObject.name, nameof(OnCouchGamesPlayMode));
             CouchGamesSdk.WebRtc.IsAvailable =
                 CGU_InitializeWebRtc(gameObject.name, nameof(OnCouchGamesWebRtc)) != 0;
+            CGU_InitializeFullscreen(gameObject.name, nameof(OnCouchGamesFullscreen));
+            CGU_InitializeSettings(gameObject.name, nameof(OnCouchGamesSettings));
 #endif
             return Task.CompletedTask;
         }
@@ -140,6 +142,40 @@ namespace Animo.CouchGames
 #endif
         }
 
+        /// <summary>The platform's fullscreen, or the mock's.</summary>
+        internal FullscreenStateEnvelope GetFullscreenState()
+        {
+            if (IsMock)
+            {
+                return new FullscreenStateEnvelope
+                {
+                    available = true,
+                    fullscreen = CouchGamesMock.Fullscreen,
+                    canToggle = CouchGamesMock.FullscreenToggleable
+                };
+            }
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var json = PointerToStringAndFree(CGU_GetFullscreenState());
+            return string.IsNullOrEmpty(json)
+                ? new FullscreenStateEnvelope()
+                : JsonUtility.FromJson<FullscreenStateEnvelope>(json) ?? new FullscreenStateEnvelope();
+#else
+            return new FullscreenStateEnvelope();
+#endif
+        }
+
+        /// <summary>The platform's settings for the game, or the mock's; a new copy each call.</summary>
+        internal CouchGamesSettings GetSettings()
+        {
+            if (IsMock)
+                return new CouchGamesSettings(CouchGamesMock.MuteAudio);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return new CouchGamesSettings(CGU_GetMuteAudio() != 0);
+#else
+            return new CouchGamesSettings(false);
+#endif
+        }
+
         internal async Task<CouchGamesResponse> InvokeAsync(string method, string argumentsJson)
         {
             if (IsMock)
@@ -157,7 +193,8 @@ namespace Animo.CouchGames
                 bridge.hasStreak ? bridge.streak : (int?)null,
                 bridge.alreadyCompleted,
                 bridge.alreadyUnlocked,
-                bridge.flushed);
+                bridge.flushed,
+                bridge.fullscreen);
         }
 
         internal Task<BridgeResponse> InvokeBridgeAsync(string method, string argumentsJson)
@@ -649,6 +686,20 @@ namespace Animo.CouchGames
                 CouchGamesSdk.WebRtc.Receive(message);
         }
 
+        public void OnCouchGamesFullscreen(string json)
+        {
+            var message = JsonUtility.FromJson<FullscreenStateEnvelope>(json);
+            if (message != null)
+                CouchGamesSdk.RaiseFullscreenChanged(message.fullscreen);
+        }
+
+        public void OnCouchGamesSettings(string json)
+        {
+            var message = JsonUtility.FromJson<SettingsEnvelope>(json);
+            if (message != null)
+                CouchGamesSdk.RaiseSettingsChanged(new CouchGamesSettings(message.muteAudio));
+        }
+
         private void InitializeMock()
         {
             _mockStore = LoadMock();
@@ -751,6 +802,10 @@ namespace Animo.CouchGames
                     return CouchGamesResponse.Ok("null");
                 case "flush":
                     return CouchGamesResponse.Ok("null");
+                case "requestFullscreen":
+                    return MockFullscreenCall(true);
+                case "exitFullscreen":
+                    return MockFullscreenCall(false);
                 case "game.getSharedRoot":
                     // The mock has no launch manifest, so no shared assets.
                     return CouchGamesResponse.Ok("null");
@@ -766,6 +821,31 @@ namespace Animo.CouchGames
                 default:
                     return CouchGamesResponse.Failed($"Mock call '{method}' requires typed arguments or is unsupported.");
             }
+        }
+
+        // A phone (FullscreenToggleable false) answers a request with its state
+        // and refuses an exit, as the platform does; otherwise the flag flips.
+        private static CouchGamesResponse MockFullscreenCall(bool want)
+        {
+            var now = CouchGamesMock.Fullscreen;
+            bool success;
+            string message;
+            if (!CouchGamesMock.FullscreenToggleable)
+            {
+                success = want && now;
+                message = success ? string.Empty : "A phone always plays fullscreen";
+            }
+            else
+            {
+                CouchGamesMock.Fullscreen = want;
+                now = want;
+                success = true;
+                message = string.Empty;
+            }
+            var raw = "{\"success\":" + (success ? "true" : "false") +
+                      ",\"message\":" + CouchGamesSdk.JsonString(message) +
+                      ",\"fullscreen\":" + (now ? "true" : "false") + "}";
+            return new CouchGamesResponse(success, message, "null", raw, fullscreen: now);
         }
 
         private void SetMockExperience(string experienceId)
@@ -920,6 +1000,12 @@ namespace Animo.CouchGames
         [DllImport("__Internal")] private static extern int CGU_InitializePlayMode(
             string gameObjectName, string callback);
         [DllImport("__Internal")] private static extern IntPtr CGU_GetPlayState();
+        [DllImport("__Internal")] private static extern int CGU_InitializeFullscreen(
+            string gameObjectName, string callback);
+        [DllImport("__Internal")] private static extern int CGU_InitializeSettings(
+            string gameObjectName, string callback);
+        [DllImport("__Internal")] private static extern IntPtr CGU_GetFullscreenState();
+        [DllImport("__Internal")] private static extern int CGU_GetMuteAudio();
         [DllImport("__Internal")] private static extern int CGU_InitializeWebRtc(
             string gameObjectName, string callback);
         [DllImport("__Internal")] private static extern IntPtr CGU_LoadLatestSaveSync();

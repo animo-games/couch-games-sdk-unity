@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added fullscreen calls (decision 0083): `RequestFullscreenAsync()`,
+  `ExitFullscreenAsync()`, `IsFullscreen`, `CanToggleFullscreen` and the
+  `FullscreenChanged` event, which drive the platform's own fullscreen, and
+  `CouchGamesResponse.Fullscreen`. A platform build without them answers
+  "Not available".
+- Added the platform's mute setting: `CouchGamesSdk.Settings.MuteAudio`
+  (`CouchGamesSettings`) and the `SettingsChanged` event.
+- The mock answers both: `CouchGamesMock.Fullscreen`, `FullscreenToggleable`
+  and `MuteAudio`, with a Fullscreen and Mute section in the Mock Lobby window.
+
 - Added the platform calls the package didn't reach: `FlushSavesAsync()`,
   `CompleteCampaignAsync()`, `DeleteGameMetadataAsync()`,
   `ClearGameMetadataAsync()`, `Track()` and `FlushTelemetryAsync()`; play

@@ -68,7 +68,9 @@ mergeInto(LibraryManager.library, {
                 streak: hasStreak ? Math.trunc(result.streak) : 0,
                 alreadyCompleted: isPlatformResponse && result.alreadyCompleted === true,
                 alreadyUnlocked: isPlatformResponse && result.alreadyUnlocked === true,
-                flushed: flushed
+                flushed: flushed,
+                // requestFullscreen and exitFullscreen: the state after the call.
+                fullscreen: isPlatformResponse && result.fullscreen === true
             }));
         }
 
@@ -174,6 +176,53 @@ mergeInto(LibraryManager.library, {
         var buffer = _malloc(size);
         stringToUTF8(json, buffer, size);
         return buffer;
+    },
+
+    // Fullscreen: onFullscreenChange reports every change, whoever made it, and
+    // doesn't fire on registration. Optional: older platform builds lack it.
+    CGU_InitializeFullscreen: function (objectPtr, callbackPtr) {
+        var objectName = UTF8ToString(objectPtr);
+        var callback = UTF8ToString(callbackPtr);
+        var sdk = typeof window !== 'undefined' ? window.CouchGames : null;
+        if (!sdk || typeof sdk.onFullscreenChange !== 'function')
+            return 0;
+        sdk.onFullscreenChange(function (fullscreen) {
+            SendMessage(objectName, callback, JSON.stringify({ available: true, fullscreen: fullscreen === true }));
+        });
+        return 1;
+    },
+
+    CGU_InitializeSettings: function (objectPtr, callbackPtr) {
+        var objectName = UTF8ToString(objectPtr);
+        var callback = UTF8ToString(callbackPtr);
+        var game = typeof window !== 'undefined' && window.CouchGames ? window.CouchGames.game : null;
+        if (!game || typeof game.addSettingsChangeListener !== 'function')
+            return 0;
+        game.addSettingsChangeListener(function (settings) {
+            SendMessage(objectName, callback, JSON.stringify({ muteAudio: !!settings && settings.muteAudio === true }));
+        });
+        return 1;
+    },
+
+    CGU_GetFullscreenState: function () {
+        var sdk = window.CouchGames;
+        var available = !!sdk && typeof sdk.requestFullscreen === 'function';
+        var state = {
+            available: available,
+            fullscreen: available && typeof sdk.isFullscreen === 'function' && sdk.isFullscreen() === true,
+            canToggle: available && typeof sdk.canToggleFullscreen === 'function' && sdk.canToggleFullscreen() === true
+        };
+        var json = JSON.stringify(state);
+        var size = lengthBytesUTF8(json) + 1;
+        var buffer = _malloc(size);
+        stringToUTF8(json, buffer, size);
+        return buffer;
+    },
+
+    CGU_GetMuteAudio: function () {
+        var game = window.CouchGames && window.CouchGames.game;
+        var settings = game ? game.settings : null;
+        return settings && settings.muteAudio === true ? 1 : 0;
     },
 
     // Signaling events, all through one callback as { type, peerId, roomId,
